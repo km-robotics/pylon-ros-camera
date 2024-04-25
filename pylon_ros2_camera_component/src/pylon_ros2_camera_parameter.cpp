@@ -64,7 +64,7 @@ PylonROS2CameraParameter::PylonROS2CameraParameter() :
     inter_pkg_delay_(1000),
     frame_transmission_delay_(0),
     shutter_mode_(SM_DEFAULT),
-    auto_flash_(false), 
+    auto_flash_(false),
     grab_timeout_(500),
     trigger_timeout_(5000),
     white_balance_auto_(0),
@@ -114,7 +114,7 @@ void PylonROS2CameraParameter::readFromRosParameterServer(rclcpp::Node& nh)
         nh.declare_parameter<double>("frame_rate", 5.0);
     }
     nh.get_parameter("frame_rate", this->frame_rate_);
-    
+
     RCLCPP_DEBUG(LOGGER, "---> camera_info_url");
     if (!nh.has_parameter("camera_info_url"))
     {
@@ -498,7 +498,7 @@ const std::string& PylonROS2CameraParameter::imageEncoding() const
     return this->image_encoding_;
 }
 
-void PylonROS2CameraParameter::setimageEncodingParam(rclcpp::Node& nh, const std::string& format) 
+void PylonROS2CameraParameter::setimageEncodingParam(rclcpp::Node& nh, const std::string& format)
 {
     if (!nh.has_parameter("image_encoding"))
     {
@@ -528,7 +528,7 @@ void PylonROS2CameraParameter::setFrameRate(rclcpp::Node& nh, const double& fram
     }
 
     this->frame_rate_ = frame_rate;
-    
+
     nh.set_parameter(rclcpp::Parameter("frame_rate", this->frame_rate_));
 }
 
@@ -545,7 +545,7 @@ void PylonROS2CameraParameter::setCameraInfoURL(rclcpp::Node& nh, const std::str
     }
 
     this->camera_info_url_ = camera_info_url;
-    
+
     nh.set_parameter(rclcpp::Parameter("camera_info_url", this->camera_info_url_));
 }
 
