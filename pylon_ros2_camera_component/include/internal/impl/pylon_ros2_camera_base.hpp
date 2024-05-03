@@ -2438,7 +2438,7 @@ std::string PylonROS2CameraImpl<CameraTraitT>::setLineDebouncerTime(const float&
     {
         if ( GenApi::IsAvailable(cam_->LineDebouncerTime) )
         {
-                if ( cam_->LineMode.GetValue() == LineModeEnums::LineMode_Input)
+            if ( cam_->LineMode.GetValue() == LineModeEnums::LineMode_Input)
             {
                 cam_->LineDebouncerTime.SetValue(value);
             }
@@ -2446,7 +2446,9 @@ std::string PylonROS2CameraImpl<CameraTraitT>::setLineDebouncerTime(const float&
             {
                 return "Error: can't set the line debouncer time, the selected line mode should be input";
             }
-        } else {
+        }
+        else
+        {
             return "The connected Camera not supporting this feature";
         }
 
@@ -2490,13 +2492,13 @@ std::string PylonROS2CameraImpl<CameraTraitT>::setDeviceLinkThroughputLimitMode(
         {
             if (turnOn)
             {
-            cam_->DeviceLinkThroughputLimitMode.SetValue(DeviceLinkThroughputLimitModeEnums::DeviceLinkThroughputLimitMode_On);
-            return "done";
+                cam_->DeviceLinkThroughputLimitMode.SetValue(DeviceLinkThroughputLimitModeEnums::DeviceLinkThroughputLimitMode_On);
+                return "done";
             }
             else
             {
-            cam_->DeviceLinkThroughputLimitMode.SetValue(DeviceLinkThroughputLimitModeEnums::DeviceLinkThroughputLimitMode_Off);
-            return "done";
+                cam_->DeviceLinkThroughputLimitMode.SetValue(DeviceLinkThroughputLimitModeEnums::DeviceLinkThroughputLimitMode_Off);
+                return "done";
             }
         }
         else
@@ -2677,7 +2679,9 @@ std::string PylonROS2CameraImpl<CameraTraitT>::setLightSourcePreset(const int& m
             {
                 return "Error: unknown value";
             }
-        } else if (GenApi::IsAvailable(cam_->BslLightSourcePreset)) {
+        }
+        else if (GenApi::IsAvailable(cam_->BslLightSourcePreset))
+        {
             if (mode == 0)
             {
                 cam_->BslLightSourcePreset.SetValue(Basler_UniversalCameraParams::BslLightSourcePresetEnums::BslLightSourcePreset_Off);
@@ -2736,7 +2740,8 @@ int PylonROS2CameraImpl<CameraTraitT>::getLightSourcePreset()
             {
                 return -3; // Unkonwn
             }
-        } else if ( GenApi::IsAvailable(cam_->BslLightSourcePreset))
+        }
+        else if ( GenApi::IsAvailable(cam_->BslLightSourcePreset))
         {
             if (cam_->BslLightSourcePreset.GetValue() == Basler_UniversalCameraParams::BslLightSourcePresetEnums::BslLightSourcePreset_Off)
             {
