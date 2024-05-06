@@ -46,7 +46,612 @@ namespace pylon_ros2_camera
 
 namespace
 {
-    static const rclcpp::Logger LOGGER = rclcpp::get_logger("basler.pylon.ros2.pylon_ros2_camera_node");
+  static const rclcpp::Logger LOGGER = rclcpp::get_logger("basler.pylon.ros2.pylon_ros2_camera_node");
+
+  // Copied from https://github.com/ros-perception/image_pipeline/blob/humble/image_proc/src/edge_aware.cpp.
+  // Copyright 2008, 2019 Willow Garage, Inc., Andreas Klintberg, Joshua Whitley
+  constexpr int avg(int a, int b)
+  {
+    return (a + b) >> 1;
+  }
+
+  // Copied from https://github.com/ros-perception/image_pipeline/blob/humble/image_proc/src/edge_aware.cpp.
+  // Copyright 2008, 2019 Willow Garage, Inc., Andreas Klintberg, Joshua Whitley
+  constexpr int avg3(int a, int b, int c)
+  {
+    return (a + b + c) / 3;
+  }
+
+  // Copied from https://github.com/ros-perception/image_pipeline/blob/humble/image_proc/src/edge_aware.cpp.
+  // Copyright 2008, 2019 Willow Garage, Inc., Andreas Klintberg, Joshua Whitley
+  constexpr int avg4(int a, int b, int c, int d)
+  {
+    return (a + b + c + d) >> 2;
+  }
+
+  // Copied from https://github.com/ros-perception/image_pipeline/blob/humble/image_proc/src/edge_aware.cpp.
+  // Copyright 2008, 2019 Willow Garage, Inc., Andreas Klintberg, Joshua Whitley
+  constexpr int wavg4(int a, int b, int c, int d, int x, int y)
+  {
+    return ((a + b) * x + (c + d) * y) / (2 * (x + y));
+  }
+
+  // Copied from https://github.com/ros-perception/image_pipeline/blob/humble/image_proc/src/edge_aware.cpp.
+  // Copyright 2008, 2019 Willow Garage, Inc., Andreas Klintberg, Joshua Whitley
+  void debayerEdgeAwareWeighted(const cv::Mat & bayer, cv::Mat & color)
+  {
+    unsigned width = bayer.cols;
+    unsigned height = bayer.rows;
+    unsigned rgb_line_step = color.step[0];
+    unsigned rgb_line_skip = rgb_line_step - width * 3;
+    int bayer_line_step = bayer.step[0];
+    int bayer_line_step2 = bayer_line_step * 2;
+
+    unsigned char * rgb_buffer = color.data;
+    unsigned char * bayer_pixel = bayer.data;
+    unsigned yIdx, xIdx;
+
+    int dh, dv;
+
+    // first two pixel values for first two lines
+    // Bayer         0 1 2
+    //         0     G r g
+    // line_step     b g b
+    // line_step2    g r g
+
+    rgb_buffer[3] = rgb_buffer[0] = bayer_pixel[1];  // red pixel
+    rgb_buffer[1] = bayer_pixel[0];  // green pixel
+    rgb_buffer[rgb_line_step + 2] = rgb_buffer[2] = bayer_pixel[bayer_line_step];  // blue;
+
+    // Bayer         0 1 2
+    //         0     g R g
+    // line_step     b g b
+    // line_step2    g r g
+    // rgb_pixel[3] = bayer_pixel[1];
+    rgb_buffer[4] = avg3(bayer_pixel[0], bayer_pixel[2], bayer_pixel[bayer_line_step + 1]);
+    rgb_buffer[rgb_line_step + 5] = rgb_buffer[5] =
+      avg(bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2]);
+
+    // BGBG line
+    // Bayer         0 1 2
+    //         0     g r g
+    // line_step     B g b
+    // line_step2    g r g
+    rgb_buffer[rgb_line_step + 3] = rgb_buffer[rgb_line_step] =
+      avg(bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1]);
+    rgb_buffer[rgb_line_step + 1] = avg3(
+      bayer_pixel[0], bayer_pixel[bayer_line_step + 1],
+      bayer_pixel[bayer_line_step2]);
+    // rgb_pixel[rgb_line_step + 2] = bayer_pixel[line_step];
+
+    // pixel (1, 1)  0 1 2
+    //         0     g r g
+    // line_step     b G b
+    // line_step2    g r g
+    // rgb_pixel[rgb_line_step + 3] = avg(bayer_pixel[1] , bayer_pixel[line_step2+1] );
+    rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+    // rgb_pixel[rgb_line_step + 5] = avg(bayer_pixel[line_step] , bayer_pixel[line_step+2]);
+
+    rgb_buffer += 6;
+    bayer_pixel += 2;
+
+    // rest of the first two lines
+    for (xIdx = 2; xIdx < width - 2; xIdx += 2, rgb_buffer += 6, bayer_pixel += 2) {
+      // GRGR line
+      // Bayer        -1 0 1 2
+      //           0   r G r g
+      //   line_step   g b g b
+      // line_step2    r g r g
+      rgb_buffer[0] = avg(bayer_pixel[1], bayer_pixel[-1]);
+      rgb_buffer[1] = bayer_pixel[0];
+      rgb_buffer[2] = bayer_pixel[bayer_line_step + 1];
+
+      // Bayer        -1 0 1 2
+      //          0    r g R g
+      //  line_step    g b g b
+      // line_step2    r g r g
+      rgb_buffer[3] = bayer_pixel[1];
+      rgb_buffer[4] = avg3(bayer_pixel[0], bayer_pixel[2], bayer_pixel[bayer_line_step + 1]);
+      rgb_buffer[rgb_line_step + 5] = rgb_buffer[5] =
+        avg(bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2]);
+
+      // BGBG line
+      // Bayer         -1 0 1 2
+      //         0      r g r g
+      // line_step      g B g b
+      // line_step2     r g r g
+      rgb_buffer[rgb_line_step] = avg4(
+        bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1],
+        bayer_pixel[-1], bayer_pixel[bayer_line_step2 - 1]);
+      rgb_buffer[rgb_line_step + 1] = avg4(
+        bayer_pixel[0], bayer_pixel[bayer_line_step2],
+        bayer_pixel[bayer_line_step - 1], bayer_pixel[bayer_line_step + 1]);
+      rgb_buffer[rgb_line_step + 2] = bayer_pixel[bayer_line_step];
+
+      // Bayer         -1 0 1 2
+      //         0      r g r g
+      // line_step      g b G b
+      // line_step2     r g r g
+      rgb_buffer[rgb_line_step + 3] = avg(bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1]);
+      rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+      // rgb_pixel[rgb_line_step + 5] = avg(bayer_pixel[line_step] , bayer_pixel[line_step+2] );
+    }
+
+    // last two pixel values for first two lines
+    // GRGR line
+    // Bayer        -1 0 1
+    //           0   r G r
+    //   line_step   g b g
+    // line_step2    r g r
+    rgb_buffer[0] = avg(bayer_pixel[1], bayer_pixel[-1]);
+    rgb_buffer[1] = bayer_pixel[0];
+    rgb_buffer[rgb_line_step + 5] = rgb_buffer[rgb_line_step + 2] =
+      rgb_buffer[5] = rgb_buffer[2] = bayer_pixel[bayer_line_step];
+
+    // Bayer        -1 0 1
+    //          0    r g R
+    //  line_step    g b g
+    // line_step2    r g r
+    rgb_buffer[3] = bayer_pixel[1];
+    rgb_buffer[4] = avg(bayer_pixel[0], bayer_pixel[bayer_line_step + 1]);
+    // rgb_pixel[5] = bayer_pixel[line_step];
+
+    // BGBG line
+    // Bayer        -1 0 1
+    //          0    r g r
+    //  line_step    g B g
+    // line_step2    r g r
+    rgb_buffer[rgb_line_step] = avg4(
+      bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1],
+      bayer_pixel[-1], bayer_pixel[bayer_line_step2 - 1]);
+    rgb_buffer[rgb_line_step + 1] = avg4(
+      bayer_pixel[0], bayer_pixel[bayer_line_step2],
+      bayer_pixel[bayer_line_step - 1], bayer_pixel[bayer_line_step + 1]);
+    // rgb_pixel[rgb_line_step + 2] = bayer_pixel[line_step];
+
+    // Bayer         -1 0 1
+    //         0      r g r
+    // line_step      g b G
+    // line_step2     r g r
+    rgb_buffer[rgb_line_step + 3] = avg(bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1]);
+    rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+    // rgb_pixel[rgb_line_step + 5] = bayer_pixel[line_step];
+
+    bayer_pixel += bayer_line_step + 2;
+    rgb_buffer += rgb_line_step + 6 + rgb_line_skip;
+
+    // main processing
+    for (yIdx = 2; yIdx < height - 2; yIdx += 2) {
+      // first two pixel values
+      // Bayer         0 1 2
+      //        -1     b g b
+      //         0     G r g
+      // line_step     b g b
+      // line_step2    g r g
+
+      rgb_buffer[3] = rgb_buffer[0] = bayer_pixel[1];  // red pixel
+      rgb_buffer[1] = bayer_pixel[0];  // green pixel
+      rgb_buffer[2] = avg(bayer_pixel[bayer_line_step], bayer_pixel[-bayer_line_step]);  // blue;
+
+      // Bayer         0 1 2
+      //        -1     b g b
+      //         0     g R g
+      // line_step     b g b
+      // line_step2    g r g
+      // rgb_pixel[3] = bayer_pixel[1];
+      rgb_buffer[4] = avg4(
+        bayer_pixel[0], bayer_pixel[2], bayer_pixel[bayer_line_step + 1],
+        bayer_pixel[1 - bayer_line_step]);
+      rgb_buffer[5] = avg4(
+        bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2],
+        bayer_pixel[-bayer_line_step], bayer_pixel[2 - bayer_line_step]);
+
+      // BGBG line
+      // Bayer         0 1 2
+      //         0     g r g
+      // line_step     B g b
+      // line_step2    g r g
+      rgb_buffer[rgb_line_step + 3] = rgb_buffer[rgb_line_step] =
+        avg(bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1]);
+      rgb_buffer[rgb_line_step + 1] = avg3(
+        bayer_pixel[0], bayer_pixel[bayer_line_step + 1],
+        bayer_pixel[bayer_line_step2]);
+      rgb_buffer[rgb_line_step + 2] = bayer_pixel[bayer_line_step];
+
+      // pixel (1, 1)  0 1 2
+      //         0     g r g
+      // line_step     b G b
+      // line_step2    g r g
+      // rgb_pixel[rgb_line_step + 3] = avg(bayer_pixel[1] , bayer_pixel[line_step2+1] );
+      rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+      rgb_buffer[rgb_line_step + 5] =
+        avg(bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2]);
+
+      rgb_buffer += 6;
+      bayer_pixel += 2;
+
+      // continue with rest of the line
+      for (xIdx = 2; xIdx < width - 2; xIdx += 2, rgb_buffer += 6, bayer_pixel += 2) {
+        // GRGR line
+        // Bayer        -1 0 1 2
+        //          -1   g b g b
+        //           0   r G r g
+        //   line_step   g b g b
+        // line_step2    r g r g
+        rgb_buffer[0] = avg(bayer_pixel[1], bayer_pixel[-1]);
+        rgb_buffer[1] = bayer_pixel[0];
+        rgb_buffer[2] = avg(bayer_pixel[bayer_line_step], bayer_pixel[-bayer_line_step]);
+
+        // Bayer        -1 0 1 2
+        //          -1   g b g b
+        //          0    r g R g
+        //  line_step    g b g b
+        // line_step2    r g r g
+
+        dh = std::abs(bayer_pixel[0] - bayer_pixel[2]);
+        dv = std::abs(bayer_pixel[-bayer_line_step + 1] - bayer_pixel[bayer_line_step + 1]);
+
+        if (dv == 0 && dh == 0) {
+          rgb_buffer[4] = avg4(
+            bayer_pixel[1 - bayer_line_step], bayer_pixel[1 + bayer_line_step],
+            bayer_pixel[0], bayer_pixel[2]);
+        } else {
+          rgb_buffer[4] = wavg4(
+            bayer_pixel[1 - bayer_line_step], bayer_pixel[1 + bayer_line_step],
+            bayer_pixel[0], bayer_pixel[2], dh, dv);
+        }
+
+        rgb_buffer[3] = bayer_pixel[1];
+        rgb_buffer[5] = avg4(
+          bayer_pixel[-bayer_line_step], bayer_pixel[2 - bayer_line_step],
+          bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2]);
+
+        // BGBG line
+        // Bayer         -1 0 1 2
+        //         -1     g b g b
+        //          0     r g r g
+        // line_step      g B g b
+        // line_step2     r g r g
+        rgb_buffer[rgb_line_step] = avg4(
+          bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1],
+          bayer_pixel[-1], bayer_pixel[bayer_line_step2 - 1]);
+        rgb_buffer[rgb_line_step + 2] = bayer_pixel[bayer_line_step];
+
+        dv = std::abs(bayer_pixel[0] - bayer_pixel[bayer_line_step2]);
+        dh = std::abs(bayer_pixel[bayer_line_step - 1] - bayer_pixel[bayer_line_step + 1]);
+
+        if (dv == 0 && dh == 0) {
+          rgb_buffer[rgb_line_step + 1] = avg4(
+            bayer_pixel[0], bayer_pixel[bayer_line_step2],
+            bayer_pixel[bayer_line_step - 1], bayer_pixel[bayer_line_step + 1]);
+        } else {
+          rgb_buffer[rgb_line_step + 1] = wavg4(
+            bayer_pixel[0], bayer_pixel[bayer_line_step2], bayer_pixel[bayer_line_step - 1],
+            bayer_pixel[bayer_line_step + 1], dh, dv);
+        }
+
+        // Bayer         -1 0 1 2
+        //         -1     g b g b
+        //          0     r g r g
+        // line_step      g b G b
+        // line_step2     r g r g
+        rgb_buffer[rgb_line_step + 3] =
+          avg(bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1]);
+        rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+        rgb_buffer[rgb_line_step + 5] =
+          avg(bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2]);
+      }
+
+      // last two pixels of the line
+      // last two pixel values for first two lines
+      // GRGR line
+      // Bayer        -1 0 1
+      //           0   r G r
+      //   line_step   g b g
+      // line_step2    r g r
+      rgb_buffer[0] = avg(bayer_pixel[1], bayer_pixel[-1]);
+      rgb_buffer[1] = bayer_pixel[0];
+      rgb_buffer[rgb_line_step + 5] = rgb_buffer[rgb_line_step + 2] =
+        rgb_buffer[5] = rgb_buffer[2] = bayer_pixel[bayer_line_step];
+
+      // Bayer        -1 0 1
+      //          0    r g R
+      //  line_step    g b g
+      // line_step2    r g r
+      rgb_buffer[3] = bayer_pixel[1];
+      rgb_buffer[4] = avg(bayer_pixel[0], bayer_pixel[bayer_line_step + 1]);
+      // rgb_pixel[5] = bayer_pixel[line_step];
+
+      // BGBG line
+      // Bayer        -1 0 1
+      //          0    r g r
+      //  line_step    g B g
+      // line_step2    r g r
+      rgb_buffer[rgb_line_step] = avg4(
+        bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1],
+        bayer_pixel[-1], bayer_pixel[bayer_line_step2 - 1]);
+      rgb_buffer[rgb_line_step + 1] = avg4(
+        bayer_pixel[0], bayer_pixel[bayer_line_step2],
+        bayer_pixel[bayer_line_step - 1], bayer_pixel[bayer_line_step + 1]);
+      // rgb_pixel[rgb_line_step + 2] = bayer_pixel[line_step];
+
+      // Bayer         -1 0 1
+      //         0      r g r
+      // line_step      g b G
+      // line_step2     r g r
+      rgb_buffer[rgb_line_step + 3] = avg(bayer_pixel[1], bayer_pixel[bayer_line_step2 + 1]);
+      rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+      // rgb_pixel[rgb_line_step + 5] = bayer_pixel[line_step];
+
+      bayer_pixel += bayer_line_step + 2;
+      rgb_buffer += rgb_line_step + 6 + rgb_line_skip;
+    }
+
+    // last two lines
+    // Bayer         0 1 2
+    //        -1     b g b
+    //         0     G r g
+    // line_step     b g b
+
+    rgb_buffer[rgb_line_step + 3] = rgb_buffer[rgb_line_step] =
+      rgb_buffer[3] = rgb_buffer[0] = bayer_pixel[1];  // red pixel
+    rgb_buffer[1] = bayer_pixel[0];  // green pixel
+    rgb_buffer[rgb_line_step + 2] = rgb_buffer[2] = bayer_pixel[bayer_line_step];  // blue;
+
+    // Bayer         0 1 2
+    //        -1     b g b
+    //         0     g R g
+    // line_step     b g b
+    // rgb_pixel[3] = bayer_pixel[1];
+    rgb_buffer[4] = avg4(
+      bayer_pixel[0], bayer_pixel[2], bayer_pixel[bayer_line_step + 1],
+      bayer_pixel[1 - bayer_line_step]);
+    rgb_buffer[5] = avg4(
+      bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2],
+      bayer_pixel[-bayer_line_step], bayer_pixel[2 - bayer_line_step]);
+
+    // BGBG line
+    // Bayer         0 1 2
+    //        -1     b g b
+    //         0     g r g
+    // line_step     B g b
+    // rgb_pixel[rgb_line_step] = bayer_pixel[1];
+    rgb_buffer[rgb_line_step + 1] = avg(bayer_pixel[0], bayer_pixel[bayer_line_step + 1]);
+    rgb_buffer[rgb_line_step + 2] = bayer_pixel[bayer_line_step];
+
+    // Bayer         0 1 2
+    //        -1     b g b
+    //         0     g r g
+    // line_step     b G b
+    // rgb_pixel[rgb_line_step + 3] = avg(bayer_pixel[1] , bayer_pixel[line_step2+1] );
+    rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+    rgb_buffer[rgb_line_step + 5] =
+      avg(bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2]);
+
+    rgb_buffer += 6;
+    bayer_pixel += 2;
+
+    // rest of the last two lines
+    for (xIdx = 2; xIdx < width - 2; xIdx += 2, rgb_buffer += 6, bayer_pixel += 2) {
+      // GRGR line
+      // Bayer       -1 0 1 2
+      //        -1    g b g b
+      //         0    r G r g
+      // line_step    g b g b
+      rgb_buffer[0] = avg(bayer_pixel[1], bayer_pixel[-1]);
+      rgb_buffer[1] = bayer_pixel[0];
+      rgb_buffer[2] = avg(bayer_pixel[bayer_line_step], bayer_pixel[-bayer_line_step]);
+
+      // Bayer       -1 0 1 2
+      //        -1    g b g b
+      //         0    r g R g
+      // line_step    g b g b
+      rgb_buffer[rgb_line_step + 3] = rgb_buffer[3] = bayer_pixel[1];
+      rgb_buffer[4] = avg4(
+        bayer_pixel[0], bayer_pixel[2], bayer_pixel[bayer_line_step + 1],
+        bayer_pixel[1 - bayer_line_step]);
+      rgb_buffer[5] = avg4(
+        bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2],
+        bayer_pixel[-bayer_line_step], bayer_pixel[-bayer_line_step + 2]);
+
+      // BGBG line
+      // Bayer       -1 0 1 2
+      //        -1    g b g b
+      //         0    r g r g
+      // line_step    g B g b
+      rgb_buffer[rgb_line_step] = avg(bayer_pixel[-1], bayer_pixel[1]);
+      rgb_buffer[rgb_line_step + 1] =
+        avg3(bayer_pixel[0], bayer_pixel[bayer_line_step - 1], bayer_pixel[bayer_line_step + 1]);
+      rgb_buffer[rgb_line_step + 2] = bayer_pixel[bayer_line_step];
+
+      // Bayer       -1 0 1 2
+      //        -1    g b g b
+      //         0    r g r g
+      // line_step    g b G b
+      // rgb_pixel[rgb_line_step + 3] = bayer_pixel[1];
+      rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+      rgb_buffer[rgb_line_step + 5] =
+        avg(bayer_pixel[bayer_line_step], bayer_pixel[bayer_line_step + 2]);
+    }
+
+    // last two pixel values for first two lines
+    // GRGR line
+    // Bayer       -1 0 1
+    //        -1    g b g
+    //         0    r G r
+    // line_step    g b g
+    rgb_buffer[rgb_line_step] = rgb_buffer[0] = avg(bayer_pixel[1], bayer_pixel[-1]);
+    rgb_buffer[1] = bayer_pixel[0];
+    rgb_buffer[5] = rgb_buffer[2] = avg(bayer_pixel[bayer_line_step], bayer_pixel[-bayer_line_step]);
+
+    // Bayer       -1 0 1
+    //        -1    g b g
+    //         0    r g R
+    // line_step    g b g
+    rgb_buffer[rgb_line_step + 3] = rgb_buffer[3] = bayer_pixel[1];
+    rgb_buffer[4] = avg3(
+      bayer_pixel[0], bayer_pixel[bayer_line_step + 1],
+      bayer_pixel[-bayer_line_step + 1]);
+    // rgb_pixel[5] = avg(bayer_pixel[line_step], bayer_pixel[-line_step] );
+
+    // BGBG line
+    // Bayer       -1 0 1
+    //        -1    g b g
+    //         0    r g r
+    // line_step    g B g
+    // rgb_pixel[rgb_line_step] = avg2(bayer_pixel[-1], bayer_pixel[1] );
+    rgb_buffer[rgb_line_step + 1] = avg3(
+      bayer_pixel[0], bayer_pixel[bayer_line_step - 1],
+      bayer_pixel[bayer_line_step + 1]);
+    rgb_buffer[rgb_line_step + 5] = rgb_buffer[rgb_line_step + 2] = bayer_pixel[bayer_line_step];
+
+    // Bayer       -1 0 1
+    //        -1    g b g
+    //         0    r g r
+    // line_step    g b G
+    // rgb_pixel[rgb_line_step + 3] = bayer_pixel[1];
+    rgb_buffer[rgb_line_step + 4] = bayer_pixel[bayer_line_step + 1];
+    // rgb_pixel[rgb_line_step + 5] = bayer_pixel[line_step];
+  }
+
+  // Adapted from https://github.com/ros-perception/image_pipeline/blob/humble/image_proc/src/debayer.cpp,
+  // DebayerNode::imageCb().
+  // Copyright 2008, 2019, Willow Garage, Inc., Andreas Klintberg, Joshua Whitley
+  cv_bridge::CvImagePtr demosaic(const sensor_msgs::msg::Image & raw_msg)
+  {
+    enum class DebayerAlgoType {
+      EDGEAWARE,
+      EDGEAWARE_WEIGHTED,
+      BILINEAR,
+      VNG,
+    };
+
+    auto algorithm = DebayerAlgoType::EDGEAWARE;
+
+    const int bit_depth = sensor_msgs::image_encodings::bitDepth(raw_msg.encoding);
+
+    // Handle non-bayer input
+    if (!sensor_msgs::image_encodings::isBayer(raw_msg.encoding))
+    {
+      try
+      {
+        return nullptr;
+      }
+      catch (cv_bridge::Exception & e)
+      {
+        RCLCPP_WARN(LOGGER, "cv_bridge conversion error: '%s'", e.what());
+        return nullptr;
+      }
+    }
+
+    if ((bit_depth != 8) && (bit_depth != 16))
+    {
+      RCLCPP_WARN_STREAM(LOGGER, "Raw image data has unsupported depth: " << bit_depth);
+      return nullptr;
+    }
+
+    const int type = (bit_depth == 8) ? CV_8U : CV_16U;
+    const cv::Mat bayer(
+        raw_msg.height, raw_msg.width, CV_MAKETYPE(type, 1),
+        const_cast<uint8_t *>(&raw_msg.data[0]), raw_msg.step);
+
+    cv::Mat color(raw_msg.height, raw_msg.width, CV_MAKETYPE(type, 3));
+    const auto output_color_encoding = bit_depth == 8 ? sensor_msgs::image_encodings::BGR8 : sensor_msgs::image_encodings::BGR16;
+
+    if (algorithm == DebayerAlgoType::EDGEAWARE_WEIGHTED)
+    {
+      // This algorithm is not in OpenCV yet.
+      if (raw_msg.encoding != sensor_msgs::image_encodings::BAYER_GRBG8)
+      {
+        RCLCPP_WARN(
+            LOGGER, "Edge aware weighted algorithm currently only support GRBG8 Bayer. "
+            "Falling back to bilinear interpolation.");
+        algorithm = DebayerAlgoType::BILINEAR;
+      }
+      else
+      {
+        debayerEdgeAwareWeighted(bayer, color);
+        return std::make_shared<cv_bridge::CvImage>(raw_msg.header, output_color_encoding, color);
+      }
+    }
+
+    // Cases EDGEAWARE, BILINEAR, and VNG.
+    int code = -1;
+    if (algorithm == DebayerAlgoType::EDGEAWARE)
+    {
+      if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_RGGB8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_RGGB16)
+      {
+        code = cv::COLOR_BayerBG2BGR_EA;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_BGGR8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_BGGR16)
+      {
+        code = cv::COLOR_BayerRG2BGR_EA;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GBRG8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GBRG16)
+      {
+        code = cv::COLOR_BayerGR2BGR_EA;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GRBG8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GRBG16)
+      {
+        code = cv::COLOR_BayerGB2BGR_EA;
+      }
+    }
+    else if (algorithm == DebayerAlgoType::BILINEAR)
+    {
+      if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_RGGB8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_RGGB16)
+      {
+        code = cv::COLOR_BayerBG2BGR;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_BGGR8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_BGGR16)
+      {
+        code = cv::COLOR_BayerRG2BGR;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GBRG8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GBRG16)
+      {
+        code = cv::COLOR_BayerGR2BGR;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GRBG8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GRBG16)
+      {
+        code = cv::COLOR_BayerGB2BGR;
+      }
+    }
+    else if (algorithm == DebayerAlgoType::VNG)
+    {
+      if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_RGGB8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_RGGB16)
+      {
+        code = cv::COLOR_BayerBG2BGR_VNG;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_BGGR8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_BGGR16)
+      {
+        code = cv::COLOR_BayerRG2BGR_VNG;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GBRG8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GBRG16)
+      {
+        code = cv::COLOR_BayerGR2BGR_VNG;
+      }
+      else if (raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GRBG8 ||
+          raw_msg.encoding == sensor_msgs::image_encodings::BAYER_GRBG16)
+      {
+        code = cv::COLOR_BayerGB2BGR_VNG;
+      }
+    }
+
+    // TODO: reduce the number of copies.
+    cv::cvtColor(bayer, color, code);
+    return std::make_shared<cv_bridge::CvImage>(raw_msg.header, output_color_encoding, color);
+  }
+
 }
 
 PylonROS2CameraNode::PylonROS2CameraNode(const rclcpp::NodeOptions& options)
@@ -4310,15 +4915,14 @@ void PylonROS2CameraNode::executeGrabRectImagesAction(const std::shared_ptr<Grab
 
     for ( std::size_t i = 0; i < result->images.size(); ++i)
     {
-      const int src_bit_depth = sensor_msgs::image_encodings::bitDepth(result->images[i].encoding);
-      const std::string debayed_encoding = (src_bit_depth == 8) ? "bgr8" : "bgr16";
-      cv_bridge::CvImagePtr cv_img_raw = cv_bridge::toCvCopy(result->images[i],
-                                                             debayed_encoding);
+      cv_bridge::CvImagePtr cv_bgr = demosaic(result->images[i]);
       this->pinhole_model_->fromCameraInfo(this->camera_info_manager_->getCameraInfo());
       cv_bridge::CvImage cv_bridge_img_rect;
       cv_bridge_img_rect.header = result->images[i].header;
-      cv_bridge_img_rect.encoding = debayed_encoding;
-      this->pinhole_model_->rectifyImage(cv_img_raw->image, cv_bridge_img_rect.image);
+      const int bit_depth = sensor_msgs::image_encodings::bitDepth(result->images[i].encoding);
+      const std::string encoding = (bit_depth == 8) ? "bgr8" : "bgr16";
+      cv_bridge_img_rect.encoding = encoding;
+      this->pinhole_model_->rectifyImage(cv_bgr->image, cv_bridge_img_rect.image);
       cv_bridge_img_rect.toImageMsg(result->images[i]);
     }
     goal_handle->succeed(result);
