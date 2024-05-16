@@ -28,9 +28,15 @@
 
 #include <GenApi/GenApi.h>
 
+#include <cv_bridge/cv_bridge.h>
+
 #include <rclcpp/logger.hpp>
 
+#include <sensor_msgs/image_encodings.hpp>
+
+#include <cmath>
 #include <functional>
+#include <limits>
 
 #include "pylon_ros2_camera_node.hpp"
 
@@ -51,11 +57,6 @@ PylonROS2CameraNode::PylonROS2CameraNode(const rclcpp::NodeOptions& options)
   , camera_info_manager_(new camera_info_manager::CameraInfoManager(this))
   , cv_bridge_img_rect_(nullptr)
   , img_rect_pub_(nullptr)
-  , set_user_output_srvs_()
-  , grab_imgs_rect_as_(nullptr)
-  , sampling_indices_()
-  , brightness_exp_lut_()
-  , is_sleeping_(false)
   , diagnostics_updater_(this)
 {
   // information logging severity mode
@@ -676,12 +677,12 @@ bool PylonROS2CameraNode::startGrabbing()
     return false;
   }
 
-  size_t num_user_outputs = this->pylon_camera_->numUserOutputs();
+  const std::size_t num_user_outputs = this->pylon_camera_->numUserOutputs();
   this->set_user_output_srvs_.resize(2 * num_user_outputs);
 
-  for (int i = 0; i < (int)num_user_outputs; ++i)
+  for (int i = 0; i < static_cast<int>(num_user_outputs); ++i)
   {
-    std::string srv_name = std::string("~/set_user_output_") + std::to_string(i);
+    const std::string srv_name = std::string("~/set_user_output_") + std::to_string(i);
     if (!this->serviceExists(srv_name))
     {
       this->set_user_output_srvs_.at(i) = this->create_service<SetBoolSrv>(
@@ -692,7 +693,7 @@ bool PylonROS2CameraNode::startGrabbing()
         });
     }
 
-    std::string srv_name_af = std::string("~/activate_autoflash_output_") + std::to_string(i);
+    const std::string srv_name_af = std::string("~/activate_autoflash_output_") + std::to_string(i);
     if (!this->serviceExists(srv_name_af))
     {
       this->set_user_output_srvs_.at(num_user_outputs + i) = this->create_service<SetBoolSrv>(
@@ -774,7 +775,7 @@ bool PylonROS2CameraNode::startGrabbing()
 
   if (!this->pylon_camera_->isBlaze() && this->pylon_camera_parameter_set_.binning_x_given_)
   {
-    size_t reached_binning_x;
+    std::size_t reached_binning_x;
     this->setBinningX(this->pylon_camera_parameter_set_.binning_x_, reached_binning_x);
     RCLCPP_INFO_STREAM(LOGGER, "Setting horizontal binning_x to "
             << this->pylon_camera_parameter_set_.binning_x_);
@@ -787,7 +788,7 @@ bool PylonROS2CameraNode::startGrabbing()
 
   if (!this->pylon_camera_->isBlaze() && this->pylon_camera_parameter_set_.binning_y_given_)
   {
-    size_t reached_binning_y;
+    std::size_t reached_binning_y;
     this->setBinningY(this->pylon_camera_parameter_set_.binning_y_, reached_binning_y);
     RCLCPP_INFO_STREAM(LOGGER, "Setting vertical binning_y to "
             << pylon_camera_parameter_set_.binning_y_);
@@ -902,7 +903,7 @@ void PylonROS2CameraNode::spin()
   {
     RCLCPP_ERROR(LOGGER, "Pylon camera has been removed, trying to reset");
 
-    this->cm_status_.status_id = pylon_ros2_camera_interfaces::msg::ComponentStatus::ERROR;;
+    this->cm_status_.status_id = pylon_ros2_camera_interfaces::msg::ComponentStatus::ERROR;
     this->cm_status_.status_msg = "Pylon camera has been removed, trying to reset";
 
     if (this->pylon_camera_parameter_set_.enable_status_publisher_)
@@ -910,7 +911,7 @@ void PylonROS2CameraNode::spin()
       this->component_status_pub_->publish(this->cm_status_);
     }
 
-    if (this->pylon_camera_)
+    if (this->pylon_camera_ != nullptr)
     {
       this->pylon_camera_.reset();
     }
@@ -929,9 +930,10 @@ void PylonROS2CameraNode::spin()
 
   if (!this->pylon_camera_->isBlaze())
   {
-    if (!this->isSleeping() && (this->img_raw_pub_.getNumSubscribers() || this->getNumSubscribersRectImagePub()))
+    const bool any_subscriber = (this->img_raw_pub_.getNumSubscribers() != 0 || this->getNumSubscribersRectImagePub() != 0);
+    if (!this->isSleeping() && any_subscriber)
     {
-      if (this->img_raw_pub_.getNumSubscribers() || this->getNumSubscribersRectImagePub())
+      if (any_subscriber)
       {
         if (!this->grabImage())
         {
@@ -1108,7 +1110,7 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
   }
 
   std::scoped_lock lock(this->grab_mutex_);
-  rclcpp::Time begin = rclcpp::Node::now(); // time measurement for the exposure search
+  const rclcpp::Time begin = rclcpp::Node::now(); // time measurement for the exposure search
 
   // brightness service can only work, if an image has already been grabbed,
   // because it calculates the mean on the current image. The interface is
@@ -1120,7 +1122,7 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
     return false;
   }
 
-  int target_brightness_co = std::min(255, target_brightness);
+  const int target_brightness_co = std::min(255, target_brightness);
   // smart brightness search initially sets the last rememberd exposure time
   if (this->brightness_exp_lut_.at(target_brightness_co) != 0.0)
   {
@@ -1150,11 +1152,11 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
           << target_brightness_co << ", current brightness = "
           << current_brightness);
 
-  if (std::fabs(current_brightness - static_cast<float>(target_brightness_co)) <= 1.0)
+  if (std::abs(current_brightness - static_cast<float>(target_brightness_co)) <= 1.0)
   {
     reached_brightness = static_cast<int>(current_brightness);
-    rclcpp::Time end = rclcpp::Node::now();
-    RCLCPP_DEBUG_STREAM(LOGGER, "Brightness reached without exposure search, duration: " << ((end-begin).nanoseconds()/ 1e9));
+    const rclcpp::Time end = rclcpp::Node::now();
+    RCLCPP_DEBUG_STREAM(LOGGER, "Brightness reached without exposure search, duration: " << ((end-begin).nanoseconds() / 1e9));
     return true;  // target brightness already reached
   }
 
@@ -1187,8 +1189,8 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
   }
 
   bool is_brightness_reached = false;
-  size_t fail_safe_ctr = 0;
-  size_t fail_safe_ctr_limit = 10;
+  std::size_t fail_safe_ctr = 0;
+  std::size_t fail_safe_ctr_limit = 10;
   if (this->pylon_camera_->typeName() == "DART")
   {
     // DART Cameras may need up to 50 images till the desired brightness
@@ -1197,16 +1199,16 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
   }
   float last_brightness = std::numeric_limits<float>::max();
 
-  // timeout for the exposure search -> need more time for great exposure values
-  rclcpp::Time start_time = rclcpp::Node::now();
-  rclcpp::Time timeout = start_time;
+  // deadline for the exposure search -> need more time for great exposure values
+  const rclcpp::Time start_time = rclcpp::Node::now();
+  rclcpp::Time deadline = start_time;
   if (target_brightness_co < 205)
   {
-    timeout += std::chrono::duration<double>(this->pylon_camera_parameter_set_.exposure_search_timeout_);
+    deadline += std::chrono::duration<double>(this->pylon_camera_parameter_set_.exposure_search_timeout_);
   }
   else
   {
-    timeout += std::chrono::duration<double>(10.0 + this->pylon_camera_parameter_set_.exposure_search_timeout_);
+    deadline += std::chrono::duration<double>(10.0 + this->pylon_camera_parameter_set_.exposure_search_timeout_);
   }
 
   while (rclcpp::ok())
@@ -1242,7 +1244,7 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
     }
 
     current_brightness = this->calcCurrentBrightness();
-    is_brightness_reached = fabs(current_brightness - static_cast<float>(target_brightness_co)) < this->pylon_camera_->maxBrightnessTolerance();
+    is_brightness_reached = std::abs(current_brightness - static_cast<float>(target_brightness_co)) < this->pylon_camera_->maxBrightnessTolerance();
 
     if (is_brightness_reached)
     {
@@ -1250,7 +1252,7 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
       break;
     }
 
-    if (std::fabs(last_brightness - current_brightness) <= 1.0)
+    if (std::abs(last_brightness - current_brightness) <= 1.0)
     {
       fail_safe_ctr++;
     }
@@ -1271,12 +1273,12 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
       return false;
     }
 
-    if (rclcpp::Node::now() > timeout)
+    if (rclcpp::Node::now() > deadline)
     {
       // cancel all running brightness search by deactivating ExposureAuto
       this->pylon_camera_->disableAllRunningAutoBrightessFunctions();
       RCLCPP_WARN_STREAM(LOGGER, "Did not reach the target brightness before "
-          << "timeout of " << ((timeout - start_time).nanoseconds()/ 1e9)
+          << "timeout of " << ((deadline - start_time).nanoseconds() / 1e9)
           << " s! Stuck at brightness " << current_brightness
           << " and exposure " << this->pylon_camera_->currentExposure() << " µs");
       reached_brightness = static_cast<int>(current_brightness);
@@ -1310,8 +1312,8 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
     }
   }
 
-  rclcpp::Time end = rclcpp::Node::now();
-  RCLCPP_DEBUG_STREAM(LOGGER, "Brightness search duration: " << ((end-begin).nanoseconds()/ 1e9));
+  const rclcpp::Time end = rclcpp::Node::now();
+  RCLCPP_DEBUG_STREAM(LOGGER, "Brightness search duration: " << ((end-begin).nanoseconds() / 1e9) << " s");
 
   return is_brightness_reached;
 }
@@ -1461,8 +1463,8 @@ bool PylonROS2CameraNode::setROI(const sensor_msgs::msg::RegionOfInterest target
   return true;
 }
 
-bool PylonROS2CameraNode::setBinningX(const size_t& target_binning_x,
-                                      size_t& reached_binning_x)
+bool PylonROS2CameraNode::setBinningX(const std::size_t& target_binning_x,
+                                      std::size_t& reached_binning_x)
 {
   std::scoped_lock lock(this->grab_mutex_);
   if (!this->pylon_camera_->setBinningX(target_binning_x, reached_binning_x))
@@ -1510,8 +1512,8 @@ bool PylonROS2CameraNode::setBinningX(const size_t& target_binning_x,
   return true;
 }
 
-bool PylonROS2CameraNode::setBinningY(const size_t& target_binning_y,
-                                      size_t& reached_binning_y)
+bool PylonROS2CameraNode::setBinningY(const std::size_t& target_binning_y,
+                                      std::size_t& reached_binning_y)
 {
   std::scoped_lock lock(this->grab_mutex_);
   if (!this->pylon_camera_->setBinningY(target_binning_y, reached_binning_y))
@@ -2604,10 +2606,10 @@ void PylonROS2CameraNode::getChunkExposureTimeCallback(const std::shared_ptr<Get
 void PylonROS2CameraNode::setBinningCallback(const std::shared_ptr<SetBinningSrv::Request> request,
                                              std::shared_ptr<SetBinningSrv::Response> response)
 {
-  size_t reached_binning_x, reached_binning_y;
-  bool success_x = this->setBinningX(request->target_binning_x,
+  std::size_t reached_binning_x, reached_binning_y;
+  const bool success_x = this->setBinningX(request->target_binning_x,
                                      reached_binning_x);
-  bool success_y = this->setBinningY(request->target_binning_y,
+  const bool success_y = this->setBinningY(request->target_binning_y,
                                      reached_binning_y);
   response->reached_binning_x = static_cast<uint32_t>(reached_binning_x);
   response->reached_binning_y = static_cast<uint32_t>(reached_binning_y);
@@ -2713,7 +2715,7 @@ void PylonROS2CameraNode::setActionTriggerConfigurationCallback(const std::share
   response->message = this->pylon_camera_->setActionTriggerConfiguration(request->action_device_key, request->action_group_key, request->action_group_mask,
                                                                          request->registration_mode, request->cleanup);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2728,7 +2730,7 @@ void PylonROS2CameraNode::issueActionCommandCallback(const std::shared_ptr<Issue
 {
   response->message = this->pylon_camera_->issueActionCommand(request->device_key, request->group_key, request->group_mask, request->broadcast_address);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2743,7 +2745,7 @@ void PylonROS2CameraNode::issueScheduledActionCommandCallback(const std::shared_
 {
   response->message = this->pylon_camera_->issueScheduledActionCommand(request->device_key, request->group_key, request->group_mask, request->action_time_ns_from_current_timestamp, request->broadcast_address);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2757,7 +2759,7 @@ void PylonROS2CameraNode::setOffsetXCallback(const std::shared_ptr<SetIntegerSrv
                                              std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setOffsetXY(request->value, true);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2775,7 +2777,7 @@ void PylonROS2CameraNode::setOffsetYCallback(const std::shared_ptr<SetIntegerSrv
                                              std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setOffsetXY(request->value, true);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2822,8 +2824,9 @@ void PylonROS2CameraNode::setDemosaicingModeCallback(const std::shared_ptr<SetIn
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
+      // EnumEntry found in the string.
       response->message = "The passed demosaicing mode number is not supported by the connected camera";
     }
   }
@@ -2833,7 +2836,7 @@ void PylonROS2CameraNode::setLightSourcePresetCallback(const std::shared_ptr<Set
                                                        std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setLightSourcePreset(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2844,7 +2847,7 @@ void PylonROS2CameraNode::setLightSourcePresetCallback(const std::shared_ptr<Set
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed light source preset number is not supported by the connected camera";
     }
@@ -2855,7 +2858,7 @@ void PylonROS2CameraNode::setWhiteBalanceAutoCallback(const std::shared_ptr<SetI
                                                       std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setWhiteBalanceAuto(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2866,7 +2869,7 @@ void PylonROS2CameraNode::setWhiteBalanceAutoCallback(const std::shared_ptr<SetI
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed balance white auto number is not supported by the connected camera";
     }
@@ -2877,7 +2880,7 @@ void PylonROS2CameraNode::setSensorReadoutModeCallback(const std::shared_ptr<Set
                                                        std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setSensorReadoutMode(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2888,7 +2891,7 @@ void PylonROS2CameraNode::setSensorReadoutModeCallback(const std::shared_ptr<Set
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed sensor readout mode number is not supported by the connected camera";
     }
@@ -2899,7 +2902,7 @@ void PylonROS2CameraNode::setAcquisitionFrameCountCallback(const std::shared_ptr
                                                            std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setAcquisitionFrameCount(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2917,7 +2920,7 @@ void PylonROS2CameraNode::setTriggerSelectorCallback(const std::shared_ptr<SetIn
                                                      std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setTriggerSelector(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2928,7 +2931,7 @@ void PylonROS2CameraNode::setTriggerSelectorCallback(const std::shared_ptr<SetIn
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed trigger selector number is not supported by the connected camera";
     }
@@ -2939,7 +2942,7 @@ void PylonROS2CameraNode::setTriggerSourceCallback(const std::shared_ptr<SetInte
                                                    std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setTriggerSource(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2950,7 +2953,7 @@ void PylonROS2CameraNode::setTriggerSourceCallback(const std::shared_ptr<SetInte
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed trigger source number is not supported by the connected camera";
     }
@@ -2961,7 +2964,7 @@ void PylonROS2CameraNode::setTriggerActivationCallback(const std::shared_ptr<Set
                                                        std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setTriggerActivation(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2979,7 +2982,7 @@ void PylonROS2CameraNode::setLineSelectorCallback(const std::shared_ptr<SetInteg
                                                   std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setLineSelector(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -2997,7 +3000,7 @@ void PylonROS2CameraNode::setLineModeCallback(const std::shared_ptr<SetIntegerSr
                                               std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setLineMode(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3015,7 +3018,7 @@ void PylonROS2CameraNode::setLineSourceCallback(const std::shared_ptr<SetInteger
                                                 std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setLineSource(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
       response->success = true;
   }
@@ -3033,7 +3036,7 @@ void PylonROS2CameraNode::setUserSetSelectorCallback(const std::shared_ptr<SetIn
                                                      std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setUserSetSelector(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3044,7 +3047,7 @@ void PylonROS2CameraNode::setUserSetSelectorCallback(const std::shared_ptr<SetIn
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed user set number is not supported by the connected camera";
     }
@@ -3055,7 +3058,7 @@ void PylonROS2CameraNode::setUserSetDefaultSelectorCallback(const std::shared_pt
                                                             std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setUserSetDefaultSelector(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3066,7 +3069,7 @@ void PylonROS2CameraNode::setUserSetDefaultSelectorCallback(const std::shared_pt
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed default user set number is not supported by the connected camera";
     }
@@ -3077,7 +3080,7 @@ void PylonROS2CameraNode::setDeviceLinkThroughputLimitCallback(const std::shared
                                                                std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setDeviceLinkThroughputLimit(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3095,7 +3098,7 @@ void PylonROS2CameraNode::setMaxTransferSizeCallback(const std::shared_ptr<SetIn
                                                      std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setMaxTransferSize(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3113,7 +3116,7 @@ void PylonROS2CameraNode::setGammaSelectorCallback(const std::shared_ptr<SetInte
                                                    std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->setGammaSelector(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3190,7 +3193,7 @@ void PylonROS2CameraNode::setOutputQueueSizeCallback(const std::shared_ptr<SetIn
   response->message = this->pylon_camera_->setOutputQueueSize(request->value);
   this->grabbingStarting();
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3205,7 +3208,7 @@ void PylonROS2CameraNode::setMaxNumBufferCallback(const std::shared_ptr<SetInteg
 {
   response->message = this->pylon_camera_->setMaxNumBuffer(request->value);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3219,7 +3222,7 @@ void PylonROS2CameraNode::setChunkSelectorCallback(const std::shared_ptr<SetInte
                                                    std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setChunkSelector(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3234,7 +3237,7 @@ void PylonROS2CameraNode::setTimerSelectorCallback(const std::shared_ptr<SetInte
 {
   response->message = this->pylon_camera_->setTimerSelector(request->value);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3249,7 +3252,7 @@ void PylonROS2CameraNode::setTimerTriggerSourceCallback(const std::shared_ptr<Se
 {
   response->message = this->pylon_camera_->setTimerTriggerSource(request->value);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3263,7 +3266,7 @@ void PylonROS2CameraNode::setPTPPriorityCallback(const std::shared_ptr<SetIntege
                                                  std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setPTPPriority(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3277,7 +3280,7 @@ void PylonROS2CameraNode::setPTPProfileCallback(const std::shared_ptr<SetInteger
                                                 std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setPTPProfile(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3291,7 +3294,7 @@ void PylonROS2CameraNode::setPTPNetworkModeCallback(const std::shared_ptr<SetInt
                                                     std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setPTPNetworkMode(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3305,7 +3308,7 @@ void PylonROS2CameraNode::setPTPUCPortAddressIndexCallback(const std::shared_ptr
                                                            std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setPTPUCPortAddressIndex(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3319,7 +3322,7 @@ void PylonROS2CameraNode::setPTPUCPortAddressCallback(const std::shared_ptr<SetI
                                                       std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setPTPUCPortAddress(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3333,7 +3336,7 @@ void PylonROS2CameraNode::setSyncFreeRunTimerStartTimeLowCallback(const std::sha
                                                                   std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setSyncFreeRunTimerStartTimeLow(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3347,7 +3350,7 @@ void PylonROS2CameraNode::setSyncFreeRunTimerStartTimeHighCallback(const std::sh
                                                                    std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setSyncFreeRunTimerStartTimeHigh(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3360,7 +3363,7 @@ void PylonROS2CameraNode::setSyncFreeRunTimerStartTimeHighCallback(const std::sh
 void PylonROS2CameraNode::setDepthMinCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setDepthMin(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3373,7 +3376,7 @@ void PylonROS2CameraNode::setDepthMinCallback(const std::shared_ptr<SetIntegerSr
 void PylonROS2CameraNode::setDepthMaxCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setDepthMax(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3386,7 +3389,7 @@ void PylonROS2CameraNode::setDepthMaxCallback(const std::shared_ptr<SetIntegerSr
 void PylonROS2CameraNode::setTemporalFilterStrengthCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setTemporalFilterStrength(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3399,7 +3402,7 @@ void PylonROS2CameraNode::setTemporalFilterStrengthCallback(const std::shared_pt
 void PylonROS2CameraNode::setOutlierRemovalThresholdCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setOutlierRemovalThreshold(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3412,7 +3415,7 @@ void PylonROS2CameraNode::setOutlierRemovalThresholdCallback(const std::shared_p
 void PylonROS2CameraNode::setOutlierRemovalToleranceCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setOutlierRemovalTolerance(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3425,7 +3428,7 @@ void PylonROS2CameraNode::setOutlierRemovalToleranceCallback(const std::shared_p
 void PylonROS2CameraNode::setAmbiguityFilterThresholdCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setAmbiguityFilterThreshold(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3438,7 +3441,7 @@ void PylonROS2CameraNode::setAmbiguityFilterThresholdCallback(const std::shared_
 void PylonROS2CameraNode::setConfidenceThresholdCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setConfidenceThreshold(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3451,7 +3454,7 @@ void PylonROS2CameraNode::setConfidenceThresholdCallback(const std::shared_ptr<S
 void PylonROS2CameraNode::setIntensityCalculationCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setIntensityCalculation(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3464,7 +3467,7 @@ void PylonROS2CameraNode::setIntensityCalculationCallback(const std::shared_ptr<
 void PylonROS2CameraNode::setExposureTimeSelectorCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setExposureTimeSelector(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3477,7 +3480,7 @@ void PylonROS2CameraNode::setExposureTimeSelectorCallback(const std::shared_ptr<
 void PylonROS2CameraNode::setOperatingModeCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setOperatingMode(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3490,7 +3493,7 @@ void PylonROS2CameraNode::setOperatingModeCallback(const std::shared_ptr<SetInte
 void PylonROS2CameraNode::setMultiCameraChannelCallback(const std::shared_ptr<SetIntegerSrv::Request> request, std::shared_ptr<SetIntegerSrv::Response> response)
 {
   response->message = this->pylon_camera_->setMultiCameraChannel(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3540,7 +3543,7 @@ void PylonROS2CameraNode::setTriggerDelayCallback(const std::shared_ptr<SetFloat
                                                   std::shared_ptr<SetFloatSrv::Response> response)
 {
   response->message = this->setTriggerDelay(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3558,7 +3561,7 @@ void PylonROS2CameraNode::setLineDebouncerTimeCallback(const std::shared_ptr<Set
                                                        std::shared_ptr<SetFloatSrv::Response> response)
 {
   response->message = this->setLineDebouncerTime(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3576,7 +3579,7 @@ void PylonROS2CameraNode::setChunkExposureTimeCallback(const std::shared_ptr<Set
                                                        std::shared_ptr<SetFloatSrv::Response> response)
 {
   response->message = this->pylon_camera_->setChunkExposureTime(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3591,7 +3594,7 @@ void PylonROS2CameraNode::setTimerDurationCallback(const std::shared_ptr<SetFloa
 {
   response->message = this->pylon_camera_->setTimerDuration(request->value);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3606,7 +3609,7 @@ void PylonROS2CameraNode::setPeriodicSignalPeriodCallback(const std::shared_ptr<
 {
   response->message = this->pylon_camera_->setPeriodicSignalPeriod(request->value);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3621,7 +3624,7 @@ void PylonROS2CameraNode::setPeriodicSignalDelayCallback(const std::shared_ptr<S
 {
   response->message = this->pylon_camera_->setPeriodicSignalDelay(request->value);
 
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3635,7 +3638,7 @@ void PylonROS2CameraNode::setSyncFreeRunTimerTriggerRateAbsCallback(const std::s
                                                                     std::shared_ptr<SetFloatSrv::Response> response)
 {
   response->message = this->pylon_camera_->setSyncFreeRunTimerTriggerRateAbs(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3648,7 +3651,7 @@ void PylonROS2CameraNode::setSyncFreeRunTimerTriggerRateAbsCallback(const std::s
 void PylonROS2CameraNode::setAcquisitionFrameRateCallback(const std::shared_ptr<SetFloatSrv::Request> request, std::shared_ptr<SetFloatSrv::Response> response)
 {
   response->message = this->pylon_camera_->setAcquisitionFrameRate(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3661,7 +3664,7 @@ void PylonROS2CameraNode::setAcquisitionFrameRateCallback(const std::shared_ptr<
 void PylonROS2CameraNode::setScan3dCalibrationOffsetCallback(const std::shared_ptr<SetFloatSrv::Request> request, std::shared_ptr<SetFloatSrv::Response> response)
 {
   response->message = this->pylon_camera_->setScan3dCalibrationOffset(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3676,7 +3679,7 @@ void PylonROS2CameraNode::setImageEncodingCallback(const std::shared_ptr<SetStri
 {
   this->grabbingStopping(); // Stop grabbing for better user experience
   response->message = this->setImageEncoding(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
     pylon_camera_parameter_set_.setimageEncodingParam(*this,request->value);
@@ -3750,7 +3753,7 @@ void PylonROS2CameraNode::setTriggerModeCallback(const std::shared_ptr<SetBoolSr
                                                  std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->setTriggerMode(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3761,7 +3764,7 @@ void PylonROS2CameraNode::setTriggerModeCallback(const std::shared_ptr<SetBoolSr
     {
       response->message = "Using this feature requires stopping image grabbing";
     }
-    else if ((response->message.find("EnumEntry") != std::string::npos) != 0)
+    else if (response->message.find("EnumEntry") != std::string::npos)
     {
       response->message = "The passed trigger mode number is not supported by the connected camera";
     }
@@ -3772,7 +3775,7 @@ void PylonROS2CameraNode::setLineInverterCallback(const std::shared_ptr<SetBoolS
                                                   std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->setLineInverter(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3790,7 +3793,7 @@ void PylonROS2CameraNode::setDeviceLinkThroughputLimitModeCallback(const std::sh
                                                                    std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->setDeviceLinkThroughputLimitMode(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3808,7 +3811,7 @@ void PylonROS2CameraNode::setGammaEnableCallback(const std::shared_ptr<SetBoolSr
                                                  std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->gammaEnable(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3880,7 +3883,7 @@ void PylonROS2CameraNode::enablePTPManagementProtocolCallback(const std::shared_
                                                               std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enablePTPManagementProtocol(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3894,7 +3897,7 @@ void PylonROS2CameraNode::enablePTPTwoStepOperationCallback(const std::shared_pt
                                                             std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enablePTPTwoStepOperation(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3908,7 +3911,7 @@ void PylonROS2CameraNode::enablePTPCallback(const std::shared_ptr<SetBoolSrv::Re
                                             std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enablePTP(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3922,7 +3925,7 @@ void PylonROS2CameraNode::enableSyncFreeRunTimerCallback(const std::shared_ptr<S
                                                          std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableSyncFreeRunTimer(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3935,7 +3938,7 @@ void PylonROS2CameraNode::enableSyncFreeRunTimerCallback(const std::shared_ptr<S
 void PylonROS2CameraNode::enableSpatialFilterCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableSpatialFilter(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3948,7 +3951,7 @@ void PylonROS2CameraNode::enableSpatialFilterCallback(const std::shared_ptr<SetB
 void PylonROS2CameraNode::enableTemporalFilterCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableTemporalFilter(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3961,7 +3964,7 @@ void PylonROS2CameraNode::enableTemporalFilterCallback(const std::shared_ptr<Set
 void PylonROS2CameraNode::enableOutlierRemovalCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableOutlierRemoval(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3974,7 +3977,7 @@ void PylonROS2CameraNode::enableOutlierRemovalCallback(const std::shared_ptr<Set
 void PylonROS2CameraNode::enableAmbiguityFilterCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableAmbiguityFilter(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -3987,7 +3990,7 @@ void PylonROS2CameraNode::enableAmbiguityFilterCallback(const std::shared_ptr<Se
 void PylonROS2CameraNode::enableThermalDriftCorrectionCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableThermalDriftCorrection(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4000,7 +4003,7 @@ void PylonROS2CameraNode::enableThermalDriftCorrectionCallback(const std::shared
 void PylonROS2CameraNode::enableDistortionCorrectionCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableDistortionCorrection(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4013,7 +4016,7 @@ void PylonROS2CameraNode::enableDistortionCorrectionCallback(const std::shared_p
 void PylonROS2CameraNode::enableAcquisitionFrameRateCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableAcquisitionFrameRate(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4026,7 +4029,7 @@ void PylonROS2CameraNode::enableAcquisitionFrameRateCallback(const std::shared_p
 void PylonROS2CameraNode::enableHDRModeCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableHDRMode(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4039,7 +4042,7 @@ void PylonROS2CameraNode::enableHDRModeCallback(const std::shared_ptr<SetBoolSrv
 void PylonROS2CameraNode::enableFastModeCallback(const std::shared_ptr<SetBoolSrv::Request> request, std::shared_ptr<SetBoolSrv::Response> response)
 {
   response->message = this->pylon_camera_->enableFastMode(request->data);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4054,7 +4057,7 @@ void PylonROS2CameraNode::executeSoftwareTriggerCallback(const std::shared_ptr<T
 {
   (void)request;
   response->message = this->executeSoftwareTrigger();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
       response->success = true;
   }
@@ -4073,7 +4076,7 @@ void PylonROS2CameraNode::saveUserSetCallback(const std::shared_ptr<TriggerSrv::
 {
   (void)request;
   response->message = this->saveUserSet();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4092,7 +4095,7 @@ void PylonROS2CameraNode::loadUserSetCallback(const std::shared_ptr<TriggerSrv::
 {
   (void)request;
   response->message = this->loadUserSet();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4111,7 +4114,7 @@ void PylonROS2CameraNode::getPfsCallback(const std::shared_ptr<GetStringSrv::Req
 {
   (void)request;
   std::tie(response->message, response->value) = this->getPfs();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4130,7 +4133,7 @@ void PylonROS2CameraNode::savePfsCallback(const std::shared_ptr<SetStringSrv::Re
 {
   (void)request;
   response->message = this->savePfs(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4149,7 +4152,7 @@ void PylonROS2CameraNode::loadPfsCallback(const std::shared_ptr<SetStringSrv::Re
 {
   (void)request;
   response->message = this->loadPfs(request->value);
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4168,7 +4171,7 @@ void PylonROS2CameraNode::triggerDeviceResetCallback(const std::shared_ptr<Trigg
 {
   (void)request;
   response->message = this->triggerDeviceReset();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4183,7 +4186,7 @@ void PylonROS2CameraNode::startGrabbingCallback(const std::shared_ptr<TriggerSrv
 {
   (void)request;
   response->message = this->grabbingStarting();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4198,7 +4201,7 @@ void PylonROS2CameraNode::stopGrabbingCallback(const std::shared_ptr<TriggerSrv:
 {
   (void)request;
   response->message = this->grabbingStopping();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4213,7 +4216,7 @@ void PylonROS2CameraNode::updateSyncFreeRunTimerCallback(const std::shared_ptr<T
 {
   (void)request;
   response->message = this->pylon_camera_->updateSyncFreeRunTimer();
-  if ((response->message.find("done") != std::string::npos) != 0)
+  if (response->message.find("done") != std::string::npos)
   {
     response->success = true;
   }
@@ -4223,17 +4226,16 @@ void PylonROS2CameraNode::updateSyncFreeRunTimerCallback(const std::shared_ptr<T
   }
 }
 
-rclcpp_action::GoalResponse PylonROS2CameraNode::handleGrabRawImagesActionGoal(const rclcpp_action::GoalUUID & uuid, std::shared_ptr<const GrabImagesAction::Goal> goal)
+rclcpp_action::GoalResponse PylonROS2CameraNode::handleGrabRawImagesActionGoal(
+    const rclcpp_action::GoalUUID & uuid __attribute((unused)),
+    std::shared_ptr<const GrabImagesAction::Goal> goal __attribute((unused)))
 {
   RCLCPP_DEBUG(LOGGER, "PylonROS2CameraNode::handleGrabRawImagesActionGoal -> Received goal request");
-  (void)uuid;
-  (void)goal;
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
-rclcpp_action::CancelResponse PylonROS2CameraNode::handleGrabRawImagesActionGoalCancel(const std::shared_ptr<GrabImagesGoalHandle> goal_handle)
+rclcpp_action::CancelResponse PylonROS2CameraNode::handleGrabRawImagesActionGoalCancel(const std::shared_ptr<GrabImagesGoalHandle> goal_handle __attribute((unused)))
 {
-  (void)goal_handle;
   RCLCPP_DEBUG(LOGGER, "PylonROS2CameraNode::handleGrabRawImagesActionGoalCancel -> Received request to cancel goal");
   return rclcpp_action::CancelResponse::ACCEPT;
 }
@@ -4253,17 +4255,16 @@ void PylonROS2CameraNode::executeGrabRawImagesAction(const std::shared_ptr<GrabI
   goal_handle->succeed(result);
 }
 
-rclcpp_action::GoalResponse PylonROS2CameraNode::handleGrabRectImagesActionGoal(const rclcpp_action::GoalUUID & uuid, std::shared_ptr<const GrabImagesAction::Goal> goal)
+rclcpp_action::GoalResponse PylonROS2CameraNode::handleGrabRectImagesActionGoal(
+    const rclcpp_action::GoalUUID & uuid __attribute((unused)),
+    std::shared_ptr<const GrabImagesAction::Goal> goal __attribute((unused)))
 {
   RCLCPP_DEBUG(LOGGER, "PylonROS2CameraNode::handleGrabRectImagesActionGoal -> Received goal request");
-  (void)uuid;
-  (void)goal;
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
-rclcpp_action::CancelResponse PylonROS2CameraNode::handleGrabRectImagesActionGoalCancel(const std::shared_ptr<GrabImagesGoalHandle> goal_handle)
+rclcpp_action::CancelResponse PylonROS2CameraNode::handleGrabRectImagesActionGoalCancel(const std::shared_ptr<GrabImagesGoalHandle> goal_handle __attribute((unused)))
 {
-  (void)goal_handle;
   RCLCPP_DEBUG(LOGGER, "PylonROS2CameraNode::handleGrabRectImagesActionGoalCancel -> Received request to cancel goal");
   return rclcpp_action::CancelResponse::ACCEPT;
 }
@@ -4281,7 +4282,6 @@ void PylonROS2CameraNode::executeGrabRectImagesAction(const std::shared_ptr<Grab
 {
   const auto goal = goal_handle->get_goal();
   auto result = std::make_shared<GrabImagesAction::Result>();
-  auto feedback = std::make_shared<GrabImagesAction::Feedback>();
 
   // stop it here if the connected cam is a blaze
   // should not happen as the action server is only set-up if the connected cam is not a blaze
@@ -4323,11 +4323,11 @@ void PylonROS2CameraNode::executeGrabRectImagesAction(const std::shared_ptr<Grab
   }
 }
 
-rclcpp_action::GoalResponse PylonROS2CameraNode::handleGrabBlazeDataActionGoal(const rclcpp_action::GoalUUID & uuid, std::shared_ptr<const GrabBlazeDataAction::Goal> goal)
+rclcpp_action::GoalResponse PylonROS2CameraNode::handleGrabBlazeDataActionGoal(
+    const rclcpp_action::GoalUUID & uuid __attribute((unused)),
+    std::shared_ptr<const GrabBlazeDataAction::Goal> goal __attribute((unused)))
 {
   RCLCPP_DEBUG(LOGGER, "PylonROS2CameraNode::handleGrabBlazeDataActionGoal -> Received goal request");
-  (void)uuid;
-  (void)goal;
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -4372,11 +4372,11 @@ void PylonROS2CameraNode::executeGrabBlazeDataAction(const std::shared_ptr<GrabB
     return;
   }
 
-  std::vector<size_t> candidates;
+  std::vector<std::size_t> candidates;
   candidates.resize(1);
   candidates.at(0) = goal->exposure_given ? goal->exposure_times.size() : 0;
 
-  size_t n_data = *std::max_element(candidates.begin(), candidates.end());
+  std::size_t n_data = *std::max_element(candidates.begin(), candidates.end());
   // if new parameters are added, needs to be checked. See PylonROS2CameraNode::grabRawImages.
 
   result->point_clouds.resize(n_data);
@@ -4534,11 +4534,11 @@ void PylonROS2CameraNode::setupSamplingIndices(std::vector<std::size_t>& indices
                                                int downsampling_factor)
 {
   indices.clear();
-  std::size_t min_window_height = static_cast<float>(rows) /
+  const std::size_t min_window_height = static_cast<float>(rows) /
                                   static_cast<float>(downsampling_factor);
-  cv::Point2i start_pt(0, 0);
-  cv::Point2i end_pt(cols, rows);
-  // add the iamge center point only once
+  const cv::Point2i start_pt(0, 0);
+  const cv::Point2i end_pt(cols, rows);
+  // add the image center point only once
   this->sampling_indices_.push_back(0.5 * rows * cols);
   this->genSamplingIndicesRec(indices,
                               min_window_height,
@@ -4566,13 +4566,12 @@ void PylonROS2CameraNode::genSamplingIndicesRec(std::vector<std::size_t>& indice
   * 0 0 0 b 0 0 0
   * 0 0 0 0 0 0 e
   */
-  cv::Point2i a, b, c, d, f, delta;
-  a = s + 0.5 * (e - s);  // center point
-  delta = 0.5 * (e - s);
-  b = s + cv::Point2i(delta.x,       1.5 * delta.y);
-  c = s + cv::Point2i(0.5 * delta.x, delta.y);
-  d = s + cv::Point2i(delta.x,       0.5 * delta.y);
-  f = s + cv::Point2i(1.5 * delta.x, delta.y);
+  const cv::Point2i a = s + 0.5 * (e - s);  // center point
+  const cv::Point2i delta = 0.5 * (e - s);
+  const cv::Point2i b = s + cv::Point2i(delta.x,       1.5 * delta.y);
+  const cv::Point2i c = s + cv::Point2i(0.5 * delta.x, delta.y);
+  const cv::Point2i d = s + cv::Point2i(delta.x,       0.5 * delta.y);
+  const cv::Point2i f = s + cv::Point2i(1.5 * delta.x, delta.y);
   indices.push_back(b.y * this->pylon_camera_->imageCols() + b.x);
   indices.push_back(c.y * this->pylon_camera_->imageCols() + c.x);
   indices.push_back(d.y * this->pylon_camera_->imageCols() + d.x);
@@ -4605,7 +4604,7 @@ float PylonROS2CameraNode::calcCurrentBrightness()
     {
       sum += this->img_raw_msg_.data.at(idx);
     }
-    if (sum > 0.0)
+    if (this->sampling_indices_.size() > 0)
     {
       sum /= static_cast<float>(this->sampling_indices_.size());
     }
@@ -4614,7 +4613,7 @@ float PylonROS2CameraNode::calcCurrentBrightness()
   {
     // The mean brightness is calculated using all pixels and all channels
     sum = std::accumulate(this->img_raw_msg_.data.begin(), this->img_raw_msg_.data.end(), 0);
-    if (sum > 0.0)
+    if (this->img_raw_msg_.data.size() > 0)
     {
       sum /= static_cast<float>(this->img_raw_msg_.data.size());
     }
@@ -4720,14 +4719,14 @@ std::shared_ptr<GrabImagesAction::Result> PylonROS2CameraNode::grabRawImages(con
     return result;
   }
 
-  std::vector<size_t> candidates;
+  std::vector<std::size_t> candidates;
   candidates.resize(4);  // gain, exposure, gamma, brightness
   candidates.at(0) = goal->gain_given ? goal->gain_values.size() : 0;
   candidates.at(1) = goal->exposure_given ? goal->exposure_times.size() : 0;
   candidates.at(2) = goal->brightness_given ? goal->brightness_values.size() : 0;
   candidates.at(3) = goal->gamma_given ? goal->gamma_values.size() : 0;
 
-  size_t n_images = *std::max_element(candidates.begin(), candidates.end());
+  std::size_t n_images = *std::max_element(candidates.begin(), candidates.end());
 
   if (goal->exposure_given && goal->exposure_times.size() != n_images)
   {
