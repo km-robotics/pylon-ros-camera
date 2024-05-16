@@ -56,6 +56,7 @@ PylonROS2CameraParameter::PylonROS2CameraParameter() :
     exposure_auto_(true),
     gain_auto_(true),
     exposure_search_timeout_(5.),
+    embedded_brightness_search_(true),
     auto_exposure_upper_limit_(0.0),
     mtu_size_(3000),
     enable_status_publisher_(false),
@@ -256,6 +257,13 @@ void PylonROS2CameraParameter::readFromRosParameterServer(rclcpp::Node& nh)
         nh.declare_parameter<double>("exposure_search_timeout", 5.);
     }
     nh.get_parameter("exposure_search_timeout", this->exposure_search_timeout_);
+
+    RCLCPP_DEBUG(LOGGER, "---> embedded_brightness_search");
+    if (!nh.has_parameter("embedded_brightness_search"))
+    {
+        nh.declare_parameter<bool>("embedded_brightness_search", true);
+    }
+    nh.get_parameter("embedded_brightness_search", this->embedded_brightness_search_);
 
     RCLCPP_DEBUG(LOGGER, "---> auto_exposure_upper_limit");
     if (!nh.has_parameter("auto_exposure_upper_limit"))

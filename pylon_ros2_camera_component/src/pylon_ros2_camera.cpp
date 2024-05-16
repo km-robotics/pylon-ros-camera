@@ -348,11 +348,6 @@ PylonROS2Camera::~PylonROS2Camera()
 {
     // Releases all Pylon resources.
     Pylon::PylonTerminate();
-    if (binary_exp_search_)
-    {
-        delete binary_exp_search_;
-        binary_exp_search_ = nullptr;
-    }
 }
 
 }  // namespace pylon_ros2_camera

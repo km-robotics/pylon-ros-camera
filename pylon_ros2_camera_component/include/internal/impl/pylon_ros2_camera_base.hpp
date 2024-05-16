@@ -29,6 +29,7 @@
 #pragma once
 
 #include <cmath>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -69,12 +70,6 @@ PylonROS2CameraImpl<CameraTraitT>::~PylonROS2CameraImpl()
 {
     delete cam_;
     cam_ = nullptr;
-
-    if (binary_exp_search_)
-    {
-        delete binary_exp_search_;
-        binary_exp_search_ = nullptr;
-    }
 }
 
 template <typename CameraTraitT>
@@ -311,11 +306,7 @@ void PylonROS2CameraImpl<CameraTraitT>::disableAllRunningAutoBrightessFunctions(
     cam_->ExposureAuto.TrySetValue(ExposureAutoEnums::ExposureAuto_Off);
     cam_->GainAuto.TrySetValue(GainAutoEnums::GainAuto_Off);
 
-    if (binary_exp_search_)
-    {
-        delete binary_exp_search_;
-        binary_exp_search_ = nullptr;
-    }
+    binary_exp_search_.reset();
 }
 
 template <typename CameraTraitT>
@@ -1155,12 +1146,13 @@ template <typename CameraTraitT>
 bool PylonROS2CameraImpl<CameraTraitT>::setBrightness(const int& target_brightness,
                                                   const float& current_brightness,
                                                   const bool& exposure_auto,
-                                                  const bool& gain_auto)
+                                                  const bool& gain_auto,
+                                                  const bool& embedded_brightness_search)
 {
     try
     {
-        // if the target brightness is greater 255, limit it to 255
-        // the brightness_to_set is a float value, regardless of the current
+        // if the target brightness is greater than 255, limit it to 255.
+        // `brightness_to_set` is a float value, regardless of the current
         // pixel data output format, i.e., 0.0 -> black, 1.0 -> white.
         typename CameraTraitT::AutoTargetBrightnessValueType brightness_to_set =
             CameraTraitT::convertBrightness(std::min(255, target_brightness));
@@ -1181,6 +1173,11 @@ bool PylonROS2CameraImpl<CameraTraitT>::setBrightness(const int& target_brightne
             << currentAutoGainUpperLimit() << "]" << std::endl;
 #endif
 **/
+        if ( !embedded_brightness_search )
+        {
+            return setExtendedBrightness(std::min(target_brightness, 255), current_brightness);
+        }
+
         if ( isPylonAutoBrightnessFunctionRunning() )
         {
             // do nothing while the pylon-auto function is active and if the
@@ -1205,7 +1202,7 @@ bool PylonROS2CameraImpl<CameraTraitT>::setBrightness(const int& target_brightne
             autoTargetBrightnessMax = cam_->AutoTargetBrightness.GetMax();
         }
         if ( autoTargetBrightnessMin <= brightness_to_set &&
-             autoTargetBrightnessMax >= brightness_to_set )
+             brightness_to_set <= autoTargetBrightnessMax)
         {
             // Use Pylon Auto Function, whenever in possible range
             // -> Own binary exposure search not necessary
@@ -1313,7 +1310,17 @@ bool PylonROS2CameraImpl<CameraTraitT>::setExtendedBrightness(const int& target_
     {
         autoTargetBrightnessMin = cam_->AutoTargetBrightness.GetMin();
     }
-    if (target_brightness > 0 && target_brightness <= 255)
+    float autoTargetBrightnessMax = 0.0;
+    if ( GenApi::IsAvailable(cam_->AutoTargetValue) )
+    {
+        autoTargetBrightnessMax = cam_->AutoTargetValue.GetMax();
+    }
+    else if (GenApi::IsAvailable(cam_->AutoTargetBrightness))
+    {
+        autoTargetBrightnessMax = cam_->AutoTargetBrightness.GetMax();
+    }
+
+    if (!(0 < target_brightness && target_brightness <= 255))
     {
         RCLCPP_ERROR_STREAM(LOGGER_BASE, "Error: Brightness value should be greater than 0 and equal to or smaller than 255");
         return false;
@@ -1322,21 +1329,28 @@ bool PylonROS2CameraImpl<CameraTraitT>::setExtendedBrightness(const int& target_
     typename CameraTraitT::AutoTargetBrightnessValueType brightness_to_set =
         CameraTraitT::convertBrightness(target_brightness);
 
-    if ( !binary_exp_search_ )
+    if ( binary_exp_search_ == nullptr )
     {
         if ( brightness_to_set < autoTargetBrightnessMin )  // Range from [0 - 49]
         {
-            binary_exp_search_ = new BinaryExposureSearch(target_brightness,
-                                                          currentAutoExposureTimeLowerLimit(),
-                                                          currentExposure(),
-                                                          currentExposure());
+            binary_exp_search_ = std::make_unique<BinaryExposureSearch>(target_brightness,
+                    currentAutoExposureTimeLowerLimit(),
+                    currentExposure(),
+                    currentExposure());
         }
-        else  // Range from [206-255]
+        else if ( brightness_to_set > autoTargetBrightnessMax )  // Range from [206-255]
         {
-            binary_exp_search_ = new BinaryExposureSearch(target_brightness,
-                                                          currentExposure(),
-                                                          currentAutoExposureTimeUpperLimit(),
-                                                          currentExposure());
+            binary_exp_search_ = std::make_unique<BinaryExposureSearch>(target_brightness,
+                    currentExposure(),
+                    currentAutoExposureTimeUpperLimit(),
+                    currentExposure());
+        }
+        else  // Range from [50-205]
+        {
+            binary_exp_search_ = std::make_unique<BinaryExposureSearch>(target_brightness,
+                    currentAutoExposureTimeLowerLimit(),
+                    currentAutoExposureTimeUpperLimit(),
+                    currentExposure());
         }
     }
 

@@ -1825,7 +1825,8 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
     if (!this->pylon_camera_->setBrightness(target_brightness_co,
                                             current_brightness,
                                             exposure_auto,
-                                            gain_auto))
+                                            gain_auto,
+                                            this->pylon_camera_parameter_set_.embedded_brightness_search_))
     {
       this->pylon_camera_->disableAllRunningAutoBrightessFunctions();
       break;

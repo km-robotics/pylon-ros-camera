@@ -237,6 +237,13 @@ public:
      */
     double exposure_search_timeout_;
 
+    /** If true, use the camera-embedded (or from the Pylon library?) brightness search.
+     * The camera-embedded brightness search doesn't work for all encodings
+     * because the computation of the brightness is different between Pylon
+     * library and the pylon-ros-camera driver.
+     */
+    bool embedded_brightness_search_;
+
     /**
      * The exposure search can be limited with an upper bound. This is to
      * prevent very high exposure times and resulting timeouts.

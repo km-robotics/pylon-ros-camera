@@ -97,7 +97,8 @@ public:
     virtual bool setBrightness(const int& target_brightness,
                                const float& current_brightness,
                                const bool& exposure_auto,
-                               const bool& gain_auto) override;
+                               const bool& gain_auto,
+                               const bool& embedded_brightness_search) override;
 
     virtual std::vector<int> detectAndCountNumUserOutputs() override;
 

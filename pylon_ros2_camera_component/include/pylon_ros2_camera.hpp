@@ -236,22 +236,26 @@ public:
 
     /**
      * Sets the target brightness
-     * Setting the exposure time to -1 enables the AutoExposureContinuous mode.
-     * Setting the exposure time to  0 disables the AutoExposure function.
-     * If the target exposure time is not in the range of Pylon's auto target brightness range
+     * If the target brightness is not in the range of Pylon's auto target brightness range
      * the extended brightness search is started.
+     * If `embedded_brightness_search` is false, the brightness search is not carried out
+     * by the camera but by `setExtendedBrightness()` function.
+     *
      * @param target_brightness is the desired brightness. Range is [1...255].
      * @param current_brightness is the current brightness with the given settings.
      * @param exposure_auto flag which indicates if the target_brightness
      *                      should be reached adapting the exposure time
      * @param gain_auto flag which indicates if the target_brightness should be
      *                      reached adapting the gain.
+     * @param embedded_brightness_search flag which indicates if the brightness search
+     *                                   is done by the camera (embedded) or by this driver.
      * @return true if the brightness could be reached or false otherwise.
      */
     virtual bool setBrightness(const int& target_brightness,
                                const float& current_brightness,
                                const bool& exposure_auto,
-                               const bool& gain_auto) = 0;
+                               const bool& gain_auto,
+                               const bool& embedded_brightness_search) = 0;
 
     /**
      * @brief Detects and counts the number of user-settable-outputs the cam
@@ -1272,7 +1276,7 @@ protected:
     /**
      * Parameters for the extended brightness search
      */
-    BinaryExposureSearch* binary_exp_search_;
+    std::unique_ptr<BinaryExposureSearch> binary_exp_search_;
 
     /**
      * The DeviceUserID of the found camera
