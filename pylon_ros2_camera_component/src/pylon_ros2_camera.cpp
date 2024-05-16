@@ -167,7 +167,7 @@ std::unique_ptr<PylonROS2Camera> createFromDevice(PYLON_CAM_TYPE cam_type, Pylon
     switch (cam_type)
     {
         case EMU:
-            return new PylonROS2EmuCamera(device);
+            return std::make_unique<PylonROS2EmuCamera>(device);
         case GIGE:
             return std::make_unique<PylonROS2GigECamera>(device);
         case GIGE2 :
@@ -269,7 +269,7 @@ std::unique_ptr<PylonROS2Camera> PylonROS2Camera::create(const std::string& devi
                                             << " with Device User Id: " << device_user_id_to_open);
 
                 PYLON_CAM_TYPE cam_type = detectPylonCamType(*it);
-                PylonROS2Camera* ros_camera = createFromDevice(cam_type, tl_factory.CreateDevice(*it));
+                std::unique_ptr<PylonROS2Camera> ros_camera = createFromDevice(cam_type, tl_factory.CreateDevice(*it));
                 if (cam_type == EMU)
                 {
                     // Implementation note: cannot set the device user id before creating the PylonROS2Camera object otherwise "Device creation failed".
