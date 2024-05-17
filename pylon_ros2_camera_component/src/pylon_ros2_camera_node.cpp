@@ -5373,24 +5373,9 @@ std::shared_ptr<GrabImagesAction::Result> PylonROS2CameraNode::grabRawImages(con
 
   std::scoped_lock lock(this->grab_mutex_);
 
-  float previous_exp, previous_gain, previous_gamma;
-  if (goal->exposure_given)
-  {
-    previous_exp = this->pylon_camera_->currentExposure();
-  }
-  if (goal->gain_given)
-  {
-    previous_gain = this->pylon_camera_->currentGain();
-  }
-  if (goal->gamma_given)
-  {
-    previous_gamma = this->pylon_camera_->currentGamma();
-  }
-  if (goal->brightness_given)
-  {
-    previous_gain = this->pylon_camera_->currentGain();
-    previous_exp = this->pylon_camera_->currentExposure();
-  }
+  const float previous_exp = this->pylon_camera_->currentExposure();
+  const float previous_gain = this->pylon_camera_->currentGain();
+  const float previous_gamma = this->pylon_camera_->currentGamma();
 
   RCLCPP_DEBUG_STREAM(LOGGER, "Number of images to grab: " << n_images);
   for (std::size_t i = 0; i < n_images; ++i)
