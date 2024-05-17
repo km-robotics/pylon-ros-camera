@@ -47,7 +47,7 @@ int main(int argc, char * argv[])
   try
   {
     // executor responsible for execution of callbacks for a set of nodes
-    rclcpp::executors::SingleThreadedExecutor exec;
+    rclcpp::executors::MultiThreadedExecutor exec;
     exec.add_node(pylon_ros2_camera_node);
     exec.spin();
 
