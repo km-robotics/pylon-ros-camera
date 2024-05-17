@@ -129,7 +129,7 @@ class PylonROS2CameraNode : public rclcpp::Node
 public:
   PYLON_ROS2_CAMERA_PUBLIC
   explicit PylonROS2CameraNode(const rclcpp::NodeOptions& options);
-  virtual ~PylonROS2CameraNode();
+  virtual ~PylonROS2CameraNode() = default;
 
   /**
    * @brief Getter for the frame rate set by the launch script or from the ros parameter server
@@ -1636,8 +1636,6 @@ protected:
   std::unique_ptr<camera_info_manager::CameraInfoManager> camera_info_manager_;
 
   sensor_msgs::msg::Image img_raw_msg_;
-
-  cv_bridge::CvImage* cv_bridge_img_rect_;
 
   sensor_msgs::msg::PointCloud2 blaze_cloud_msg_;
   sensor_msgs::msg::Image intensity_map_msg_, depth_map_msg_, depth_map_color_msg_, confidence_map_msg_;

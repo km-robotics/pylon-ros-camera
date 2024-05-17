@@ -517,7 +517,7 @@ namespace
   // Adapted from https://github.com/ros-perception/image_pipeline/blob/humble/image_proc/src/debayer.cpp,
   // DebayerNode::imageCb().
   // Copyright 2008, 2019, Willow Garage, Inc., Andreas Klintberg, Joshua Whitley
-  cv_bridge::CvImagePtr demosaic(const sensor_msgs::msg::Image & raw_msg)
+  cv_bridge::CvImageConstPtr demosaic(const sensor_msgs::msg::Image & raw_msg)
   {
     enum class DebayerAlgoType {
       EDGEAWARE,
@@ -531,11 +531,19 @@ namespace
     const int bit_depth = sensor_msgs::image_encodings::bitDepth(raw_msg.encoding);
 
     // Handle non-bayer input
+    if (sensor_msgs::image_encodings::isMono(raw_msg.encoding)
+        || sensor_msgs::image_encodings::isColor(raw_msg.encoding))
+    {
+      // MONO?, BGR?, RGB?, BGR?, RGB?, and similar.
+      return cv_bridge::toCvShare(sensor_msgs::msg::Image::ConstSharedPtr(&raw_msg));
+    }
     if (!sensor_msgs::image_encodings::isBayer(raw_msg.encoding))
     {
+      // Other non-bayer encodings (UYVY, YUV422, 8UC3, etc).
+      // 8UC3 will be converted to BGR8 even if this was not the original meaning.
       try
       {
-        return nullptr;
+        return cv_bridge::toCvCopy(raw_msg, sensor_msgs::image_encodings::BGR8);
       }
       catch (cv_bridge::Exception & e)
       {
@@ -656,7 +664,6 @@ namespace
 
 PylonROS2CameraNode::PylonROS2CameraNode(const rclcpp::NodeOptions& options)
   : Node("pylon_ros2_camera_node", options)
-  , cv_bridge_img_rect_(nullptr)
   , diagnostics_updater_(this)
 {
   camera_info_manager_ = std::make_unique<camera_info_manager::CameraInfoManager>(this);
@@ -681,15 +688,6 @@ PylonROS2CameraNode::PylonROS2CameraNode(const rclcpp::NodeOptions& options)
   timer_ = this->create_wall_timer(
             std::chrono::duration<double>(1. / this->frameRate()),
             std::bind(&PylonROS2CameraNode::spin, this));
-}
-
-PylonROS2CameraNode::~PylonROS2CameraNode()
-{
-  if (this->cv_bridge_img_rect_)
-  {
-    delete this->cv_bridge_img_rect_;
-    this->cv_bridge_img_rect_ = nullptr;
-  }
 }
 
 const double& PylonROS2CameraNode::frameRate() const
@@ -1544,12 +1542,13 @@ void PylonROS2CameraNode::spin()
       // this->getNumSubscribersRectImagePub() involves that this->camera_info_manager_->isCalibrated() == true
       if (this->getNumSubscribersRectImagePub() > 0)
       {
-        this->cv_bridge_img_rect_->header.stamp = this->img_raw_msg_.header.stamp;
-        assert(this->pinhole_model_->initialized());
-        cv_bridge::CvImagePtr cv_img_raw = cv_bridge::toCvCopy(this->img_raw_msg_, this->img_raw_msg_.encoding);
-        this->pinhole_model_->fromCameraInfo(this->camera_info_manager_->getCameraInfo());
-        this->pinhole_model_->rectifyImage(cv_img_raw->image, this->cv_bridge_img_rect_->image);
-        this->img_rect_pub_->publish(this->cv_bridge_img_rect_->toImageMsg());
+        cv_bridge::CvImageConstPtr cv_img_bgr = demosaic(img_raw_msg_);
+        auto cv_img_rect = cv_bridge::CvImage();
+        cv_img_rect.header = cv_img_bgr->header;
+        cv_img_rect.encoding = cv_img_bgr->encoding;
+        this->pinhole_model_.fromCameraInfo(this->camera_info_manager_->getCameraInfo());
+        this->pinhole_model_.rectifyImage(cv_img_bgr->image, cv_img_rect.image);
+        this->img_rect_pub_.publish(cv_img_rect.toImageMsg());
       }
     }
   }
@@ -4890,29 +4889,25 @@ void PylonROS2CameraNode::executeGrabRectImagesAction(const std::shared_ptr<Grab
     goal_handle->succeed(result);
     return;
   }
-  else
-  {
-    result = this->grabRawImages(goal_handle);
-    if (!result->success)
-    {
-      goal_handle->succeed(result);
-      return;
-    }
 
-    for ( std::size_t i = 0; i < result->images.size(); ++i)
-    {
-      cv_bridge::CvImagePtr cv_bgr = demosaic(result->images[i]);
-      this->pinhole_model_->fromCameraInfo(this->camera_info_manager_->getCameraInfo());
-      cv_bridge::CvImage cv_bridge_img_rect;
-      cv_bridge_img_rect.header = result->images[i].header;
-      const int bit_depth = sensor_msgs::image_encodings::bitDepth(result->images[i].encoding);
-      const std::string encoding = (bit_depth == 8) ? "bgr8" : "bgr16";
-      cv_bridge_img_rect.encoding = encoding;
-      this->pinhole_model_->rectifyImage(cv_bgr->image, cv_bridge_img_rect.image);
-      cv_bridge_img_rect.toImageMsg(result->images[i]);
-    }
+  result = this->grabRawImages(goal_handle);
+  if (!result->success)
+  {
     goal_handle->succeed(result);
+    return;
   }
+
+  for ( std::size_t i = 0; i < result->images.size(); ++i)
+  {
+    cv_bridge::CvImageConstPtr cv_bgr = demosaic(result->images[i]);
+    cv_bridge::CvImage cv_bridge_img_rect;
+    cv_bridge_img_rect.header = result->images[i].header;
+    cv_bridge_img_rect.encoding = cv_bgr->encoding;
+    this->pinhole_model_.fromCameraInfo(this->camera_info_manager_->getCameraInfo());
+    this->pinhole_model_.rectifyImage(cv_bgr->image, cv_bridge_img_rect.image);
+    cv_bridge_img_rect.toImageMsg(result->images[i]);
+  }
+  goal_handle->succeed(result);
 }
 
 rclcpp_action::GoalResponse PylonROS2CameraNode::handleGrabBlazeDataActionGoal(
@@ -5244,12 +5239,6 @@ void PylonROS2CameraNode::setupRectification()
       std::bind(&PylonROS2CameraNode::handleGrabRectImagesActionGoalAccepted, this, _1));
   }
 
-  if (!this->cv_bridge_img_rect_)
-  {
-    this->cv_bridge_img_rect_ = new cv_bridge::CvImage();
-  }
-  this->cv_bridge_img_rect_->header = img_raw_msg_.header;
-  this->cv_bridge_img_rect_->encoding = img_raw_msg_.encoding;
   this->pinhole_model_ = image_geometry::PinholeCameraModel();
 }
 
