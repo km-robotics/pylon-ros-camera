@@ -656,14 +656,11 @@ namespace
 
 PylonROS2CameraNode::PylonROS2CameraNode(const rclcpp::NodeOptions& options)
   : Node("pylon_ros2_camera_node", options)
-  , pylon_camera_(nullptr)
-  , pinhole_model_(nullptr)
-  , pylon_camera_parameter_set_()
-  , camera_info_manager_(new camera_info_manager::CameraInfoManager(this))
   , cv_bridge_img_rect_(nullptr)
-  , img_rect_pub_(nullptr)
   , diagnostics_updater_(this)
 {
+  camera_info_manager_ = std::make_unique<camera_info_manager::CameraInfoManager>(this);
+
   // information logging severity mode
   rcutils_ret_t __attribute__((unused)) res = rcutils_logging_set_logger_level(LOGGER.get_name(), RCUTILS_LOG_SEVERITY_DEBUG);
   //RCUTILS_LOG_SEVERITY_DEBUG
@@ -688,22 +685,10 @@ PylonROS2CameraNode::PylonROS2CameraNode(const rclcpp::NodeOptions& options)
 
 PylonROS2CameraNode::~PylonROS2CameraNode()
 {
-  if (this->img_rect_pub_)
-  {
-    delete this->img_rect_pub_;
-    this->img_rect_pub_ = nullptr;
-  }
-
   if (this->cv_bridge_img_rect_)
   {
     delete this->cv_bridge_img_rect_;
     this->cv_bridge_img_rect_ = nullptr;
-  }
-
-  if (this->pinhole_model_)
-  {
-    delete this->pinhole_model_;
-    this->pinhole_model_ = nullptr;
   }
 }
 
@@ -2768,7 +2753,7 @@ std::string PylonROS2CameraNode::gammaEnable(const int& enable)
 
 uint32_t PylonROS2CameraNode::getNumSubscribersRectImagePub() const
 {
-  return this->camera_info_manager_->isCalibrated() ? this->img_rect_pub_->getNumSubscribers() : 0;
+  return this->camera_info_manager_->isCalibrated() ? this->img_rect_pub_.getNumSubscribers() : 0;
 }
 
 void PylonROS2CameraNode::getMaxNumBufferCallback(const std::shared_ptr<GetIntegerSrv::Request> request,
@@ -5247,10 +5232,7 @@ void PylonROS2CameraNode::setupRectification()
 {
   using namespace std::placeholders;
 
-  if (!this->img_rect_pub_)
-  {
-    this->img_rect_pub_ = new image_transport::Publisher(image_transport::create_publisher(this, "~/image_rect"));
-  }
+  this->img_rect_pub_ = image_transport::create_publisher(this, "~/image_rect");
 
   if (!this->grab_imgs_rect_as_)
   {
@@ -5262,18 +5244,13 @@ void PylonROS2CameraNode::setupRectification()
       std::bind(&PylonROS2CameraNode::handleGrabRectImagesActionGoalAccepted, this, _1));
   }
 
-  if (!this->pinhole_model_)
-  {
-    this->pinhole_model_ = new image_geometry::PinholeCameraModel();
-  }
-
-  this->pinhole_model_->fromCameraInfo(this->camera_info_manager_->getCameraInfo());
   if (!this->cv_bridge_img_rect_)
   {
     this->cv_bridge_img_rect_ = new cv_bridge::CvImage();
   }
   this->cv_bridge_img_rect_->header = img_raw_msg_.header;
   this->cv_bridge_img_rect_->encoding = img_raw_msg_.encoding;
+  this->pinhole_model_ = image_geometry::PinholeCameraModel();
 }
 
 std::shared_ptr<GrabImagesAction::Result> PylonROS2CameraNode::grabRawImages(const std::shared_ptr<GrabImagesGoalHandle> goal_handle)

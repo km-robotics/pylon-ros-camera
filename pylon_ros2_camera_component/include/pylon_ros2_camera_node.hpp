@@ -1629,11 +1629,11 @@ protected:
 protected:
 
   // camera
-  image_geometry::PinholeCameraModel* pinhole_model_;
   std::unique_ptr<PylonROS2Camera> pylon_camera_;
+  image_geometry::PinholeCameraModel pinhole_model_;
 
   PylonROS2CameraParameter pylon_camera_parameter_set_;
-  camera_info_manager::CameraInfoManager* camera_info_manager_;
+  std::unique_ptr<camera_info_manager::CameraInfoManager> camera_info_manager_;
 
   sensor_msgs::msg::Image img_raw_msg_;
 
@@ -1650,7 +1650,7 @@ protected:
   pylon_ros2_camera_interfaces::msg::ComponentStatus cm_status_;
   // image transport publishers
   image_transport::CameraPublisher img_raw_pub_;
-  image_transport::Publisher* img_rect_pub_;
+  image_transport::Publisher img_rect_pub_;
   // blaze related topics
   std::string blaze_cloud_topic_name_;
   std::string blaze_intensity_topic_name_;
