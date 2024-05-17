@@ -536,7 +536,7 @@ bool PylonROS2CameraImpl<CameraTrait>::grab(Pylon::CBaslerUniversalGrabResultPtr
         // -> 2nd trigger might get lost
         if ((cam_->TriggerMode.GetValue() == TriggerModeEnums::TriggerMode_On))
         {
-            if (cam_->WaitForFrameTriggerReady(trigger_timeout_, Pylon::TimeoutHandling_ThrowException))
+            if (cam_->WaitForFrameTriggerReady(trigger_timeout_, Pylon::TimeoutHandling_Return))
             {
                 cam_->ExecuteSoftwareTrigger();
             }
