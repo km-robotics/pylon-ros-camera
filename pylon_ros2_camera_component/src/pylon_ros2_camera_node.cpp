@@ -5199,6 +5199,20 @@ float PylonROS2CameraNode::calcCurrentBrightness()
       sum /= static_cast<float>(this->sampling_indices_.size());
     }
   }
+  else if (this->img_raw_msg_.encoding == sensor_msgs::image_encodings::YUV422_YUY2)
+  {
+    // 1 macropixel = 2 pixels = 32 bits = Y0 U Y1 V encoded in 4 bytes in the ROS message
+    // The mean brightness is calculated using a subset of all pixels
+    for (const std::size_t& idx : this->sampling_indices_)
+    {
+      const std::size_t y_idx = idx * 2;
+      sum += this->img_raw_msg_.data.at(y_idx);
+    }
+    if (this->sampling_indices_.size() > 0)
+    {
+      sum /= static_cast<float>(this->sampling_indices_.size());
+    }
+  }
   else if (this->img_raw_msg_.encoding == sensor_msgs::image_encodings::YUV422)
   {
     // 1 macropixel = 2 pixels = 32 bits = U Y0 V Y1 encoded in 4 bytes in the ROS message

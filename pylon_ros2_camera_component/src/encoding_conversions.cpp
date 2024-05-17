@@ -112,9 +112,15 @@ bool ros2GenAPI(const std::string& ros_enc, std::string& gen_api_enc, bool is_16
     }
     else if ( ros_enc == sensor_msgs::image_encodings::YUV422 )
     {
-        //  This is the UYVY version of YUV422 codec http://www.fourcc.org/yuv.php#UYVY
+        //  This is the UYVY version of YUV422 codec https://fourcc.org/pixel-format/yuv-uyvy/
         //  with an 8-bit depth. Is the same as basler provides
         gen_api_enc = "YUV422Packed"; // --> UYVY implementation
+    }
+    else if ( ros_enc == sensor_msgs::image_encodings::YUV422_YUY2 )
+    {
+        //  This is the YUYV version of YUV422 codec https://fourcc.org/pixel-format/yuv-yuy2/
+        //  with an 8-bit depth. Is the same as basler provides
+        gen_api_enc = "YUV422_YUYV_Packed"; // --> UYVY implementation
     }
     else
     {
@@ -207,39 +213,51 @@ bool genAPI2Ros(const std::string& gen_api_enc, std::string& ros_enc)
     {
         ros_enc = sensor_msgs::image_encodings::YUV422;
     }
-
-    /*
-        // Currently no ROS equivalents:
-        else if ( gen_api_enc == "YUV422_YUYV_Packed" )
-        {
-            ros_enc = sensor_msgs::image_encodings::YUV422;
-        }
-        else if ( gen_api_enc == "YCbCr422_8" )
-        {
-            ros_enc = sensor_msgs::image_encodings::YUV422;
-        }
-    */
-
+    else if ( gen_api_enc == "YUV422_YUYV_Packed" )
+    {
+        ros_enc = sensor_msgs::image_encodings::YUV422_YUY2;
+    }
     else
     {
         /* Unsupported are:
+         * - Mono1Packed
+         * - Mono2Packed
+         * - Mono4Packed
          * - Mono10
+         * - Mono10Packed
          * - Mono10p
+         * - Mono12Packed
          * - Mono12p
          * - BayerGR10
-         * - BayerGR10p
          * - BayerRG10
-         * - BayerRG10p
          * - BayerGB10
-         * - BayerGB10p
          * - BayerBG10
+         * - BayerGR12Packed
+         * - BayerRG12Packed
+         * - BayerGB12Packed
+         * - BayerBG12Packed
+         * - BayerGR10p
+         * - BayerRG10p
+         * - BayerGB10p
          * - BayerBG10p
          * - BayerGR12p
          * - BayerRG12p
          * - BayerGB12p
          * - BayerBG12p
-         * - YCbCr422_8
-         * - YUV422_YUYV_Packed
+         * - RGB8Packed
+         * - BGR8Packed
+         * - RGBA8Packed
+         * - BGRA8Packed
+         * - RGB10Packed
+         * - BGR10Packed
+         * - RGB12Packed
+         * - BGR12Packed
+         * - RGB12V1Packed
+         * - RGB16Packed
+         * - RGB8Planar
+         * - RGB16Planar
+         * - YCbCr420_8_YY_CbCr_Semiplanar
+         * - YCbCr422_8_YY_CbCr_Semiplanar
          */
         return false;
     }

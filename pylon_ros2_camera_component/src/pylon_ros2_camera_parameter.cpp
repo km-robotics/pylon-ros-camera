@@ -175,7 +175,8 @@ void PylonROS2CameraParameter::readFromRosParameterServer(rclcpp::Node& nh)
             !sensor_msgs::image_encodings::isMono(encoding) &&
             !sensor_msgs::image_encodings::isColor(encoding) &&
             !sensor_msgs::image_encodings::isBayer(encoding) &&
-            encoding != sensor_msgs::image_encodings::YUV422)
+            encoding != sensor_msgs::image_encodings::YUV422 &&
+            encoding != sensor_msgs::image_encodings::YUV422_YUY2)
         {
             RCLCPP_WARN_STREAM(LOGGER, "Desired image encoding parameter: '" << encoding
                 << "' is not part of the 'sensor_msgs/image_encodings.hpp' list!"
