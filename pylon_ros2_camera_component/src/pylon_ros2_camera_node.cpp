@@ -676,12 +676,12 @@ PylonROS2CameraNode::PylonROS2CameraNode(const rclcpp::NodeOptions& options)
   //RCUTILS_LOG_SEVERITY_ERROR
   //RCUTILS_LOG_SEVERITY_FATAL
 
-  // initializing the interfaces
-  this->initInterfaces();
-
   // initialize camera instance and start grabbing
   if (!this->init())
     return;
+
+  // initializing the interfaces
+  this->initInterfaces();
 
   // starting spinning thread
   RCLCPP_INFO_STREAM(LOGGER, "Start image grabbing (if node connects) to topic with a spinning rate of: " << this->frameRate() << " Hz");
@@ -755,18 +755,21 @@ void PylonROS2CameraNode::initPublishers()
   this->img_raw_pub_ = image_transport::create_camera_publisher(this, msg_name);
 
   // blaze related topics
-  msg_name = msg_prefix + "blaze_cloud"; this->blaze_cloud_topic_name_ = msg_name;
-  this->blaze_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(msg_name, 10);
-  msg_name = msg_prefix + "blaze_intensity"; this->blaze_intensity_topic_name_ = msg_name;
-  this->blaze_intensity_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
-  msg_name = msg_prefix + "blaze_depth_map"; this->blaze_depth_map_topic_name_ = msg_name;
-  this->blaze_depth_map_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
-  msg_name = msg_prefix + "blaze_depth_map_color"; this->blaze_depth_map_color_topic_name_ = msg_name;
-  this->blaze_depth_map_color_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
-  msg_name = msg_prefix + "blaze_confidence"; this->blaze_confidence_topic_name_ = msg_name;
-  this->blaze_confidence_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
-  msg_name = msg_prefix + "blaze_camera_info";
-  this->blaze_cam_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(msg_name, 10);
+  if ((pylon_camera_ != nullptr) && pylon_camera_->isBlaze())
+  {
+    msg_name = msg_prefix + "blaze_cloud"; this->blaze_cloud_topic_name_ = msg_name;
+    this->blaze_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(msg_name, 10);
+    msg_name = msg_prefix + "blaze_intensity"; this->blaze_intensity_topic_name_ = msg_name;
+    this->blaze_intensity_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
+    msg_name = msg_prefix + "blaze_depth_map"; this->blaze_depth_map_topic_name_ = msg_name;
+    this->blaze_depth_map_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
+    msg_name = msg_prefix + "blaze_depth_map_color"; this->blaze_depth_map_color_topic_name_ = msg_name;
+    this->blaze_depth_map_color_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
+    msg_name = msg_prefix + "blaze_confidence"; this->blaze_confidence_topic_name_ = msg_name;
+    this->blaze_confidence_pub_ = this->create_publisher<sensor_msgs::msg::Image>(msg_name, 10);
+    msg_name = msg_prefix + "blaze_camera_info";
+    this->blaze_cam_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(msg_name, 10);
+  }
 }
 
 void PylonROS2CameraNode::initServices()
