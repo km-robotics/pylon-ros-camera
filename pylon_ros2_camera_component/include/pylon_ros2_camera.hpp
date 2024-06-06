@@ -1331,7 +1331,7 @@ protected:
     /**
      * Max allowed delta between target and reached brightness
      */
-    const float max_brightness_tolerance_;
+    const float max_brightness_tolerance_{10.0};
 
     /**
      * Exposure times to use when in sequencer mode.

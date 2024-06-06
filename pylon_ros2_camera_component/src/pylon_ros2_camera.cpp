@@ -59,7 +59,6 @@ PylonROS2Camera::PylonROS2Camera()
     , grab_timeout_(-1.0)
     , is_ready_(false)
     , is_binary_exposure_search_running_(false)
-    , max_brightness_tolerance_(2.5)
 {}
 
 PYLON_CAM_TYPE detectPylonCamType(const Pylon::CDeviceInfo& device_info)

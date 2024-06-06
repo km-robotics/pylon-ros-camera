@@ -1744,7 +1744,7 @@ bool PylonROS2CameraNode::setBrightness(const int& target_brightness,
           << target_brightness_co << ", current brightness = "
           << current_brightness);
 
-  if (std::abs(current_brightness - static_cast<float>(target_brightness_co)) <= 1.0)
+  if (std::abs(current_brightness - static_cast<float>(target_brightness_co)) <= 5.0)
   {
     reached_brightness = static_cast<int>(current_brightness);
     const rclcpp::Time end = rclcpp::Node::now();
